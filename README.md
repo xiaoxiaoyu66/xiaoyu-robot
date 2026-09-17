@@ -63,14 +63,11 @@ XiaoYu Robot/
 ## 快速开始
 
 ```powershell
-# 1. 建虚拟环境（只需一次）
 cd "D:\JavaAI\XiaoYu Robot"
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-# 如果报"禁止运行脚本"：Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 
-# 2. 装依赖
-pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple
+# 1. 装依赖
+#    当前直接用系统 Python（依赖已装好，直接能跑）。
+#    规范做法是装进虚拟环境，见 TODO.md，以后再做。
 pip install -r requirements.txt
 
 # 3. 配密钥
@@ -254,3 +251,4 @@ RuntimeError: 认证失败: <已脱敏>
 ## 文档
 
 - `docs/总方案_v2_从零开始.md` —— 完整路线、硬件清单、从零装环境的每一步
+- `TODO.md` —— 想做但先记着的事（含"迁移到虚拟环境"）

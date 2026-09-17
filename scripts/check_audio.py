@@ -49,7 +49,7 @@ def main() -> int:
         logger.error("  1. 是不是麦克风被别的软件占用了（微信 / 腾讯会议 / 游戏语音）")
         logger.error("  2. 系统设置 -> 隐私和安全性 -> 麦克风，确认允许桌面应用访问")
         logger.error("  3. 上面的设备清单里如果有多个输入设备，把编号填进 .env 的 XIAOYU_MIC_DEVICE")
-        logger.error("  4. 声音设置里把麦克风音量拉高，并关掉"自动增益"试试")
+        logger.error("  4. 声音设置里的麦克风音量拉高，并关闭自动增益试试")
         return 1
 
     logger.info("正在播放刚才的录音...")
