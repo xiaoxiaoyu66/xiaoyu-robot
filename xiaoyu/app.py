@@ -134,11 +134,29 @@ def run_text_mode(settings: Settings) -> None:
         logger.info("对话结束，再见")
 
 
+def play_cue(synthesizer, kind: str, settings: Settings) -> None:
+    """播一声提示音。
+
+    唤醒命中后要**立刻**播一声。因为从"听见唤醒词"到"它开口说话"，
+    中间还要等识别 + 大模型 + 合成，实测 3 秒起步 ——
+    这段时间一点动静都没有的话，人会以为它没听见，于是重复喊唤醒词。
+
+    提示音纯属锦上添花：没配好、播不出来、设备正被占用，都不该影响主流程。
+    """
+    if not settings.audio.cue_enabled:
+        return
+    try:
+        synthesizer.speaker.play_cue(kind)
+    except Exception:
+        logger.debug("提示音没播出来，忽略", exc_info=True)
+
+
 def run_voice_loop(settings: Settings) -> None:
     """完整链路：唤醒 -> 录音 -> 识别 -> 回答 -> 出声。"""
     import numpy as np
 
     from .asr.recognizer import SpeechRecognizer
+    from .audio import sfx
     from .audio.recorder import Recorder
     from .llm.client import DeepSeekClient
     from .memory.store import MemoryStore
@@ -158,6 +176,7 @@ def run_voice_loop(settings: Settings) -> None:
         while True:
             state.set(State.IDLE, "等待唤醒")
             detector.listen_once()
+            play_cue(synthesizer, sfx.ACK, settings)      # 先应一声，别让人干等
 
             for round_index in range(1, FOLLOW_UP_ROUNDS + 1):
                 state.set(State.LISTENING, f"第 {round_index} 轮")
@@ -183,6 +202,7 @@ def run_voice_loop(settings: Settings) -> None:
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，退出")
     finally:
+        play_cue(synthesizer, sfx.DONE, settings)
         memory.close()
 
 

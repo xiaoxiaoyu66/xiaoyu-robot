@@ -21,6 +21,7 @@ import soundfile as sf
 
 from ..config import AudioConfig
 from ..logger import get_logger
+from . import sfx
 from .devices import resolve_device
 
 logger = get_logger(__name__)
@@ -90,6 +91,19 @@ class Speaker:
 
         if wait:
             sd.wait()
+
+    def play_cue(self, kind: str = sfx.ACK) -> None:
+        """播一声提示音（"听到了" / "结束了" / "出错了"）。
+
+        唤醒命中后要**立刻**播一声 —— 那一刻人还听不到任何"它在思考"的信号，
+        而后面还要等识别和大模型好几秒。一声短音就是最省事的"我听见了"。
+
+        提示音只是锦上添花，出了任何问题都不该影响主流程，所以整段吞掉异常。
+        """
+        try:
+            self.play_array(sfx.make_cue(kind, self.config.sample_rate))
+        except Exception:
+            logger.debug("提示音没播出来，不影响主流程", exc_info=True)
 
     def stop(self) -> None:
         sd.stop()

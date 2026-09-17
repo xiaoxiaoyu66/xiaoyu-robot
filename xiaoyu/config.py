@@ -76,6 +76,19 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+def _env_bool(name: str, default: bool) -> bool:
+    """读一个开关。写 1/true/yes/on 都算开，写 0/false/no/off 都算关。"""
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"0", "false", "no", "off"}:
+        return False
+    logger.warning("环境变量 {} 不是开关值：{!r}，用默认值 {}", name, raw, default)
+    return default
+
+
 def _env_str(name: str) -> str | None:
     """读一个字符串环境变量，空白一律当成没设置。"""
     value = os.environ.get(name, "").strip()
@@ -157,9 +170,12 @@ class AudioConfig:
     # 名字基本不变。两个都填时以名字为准，编号只当备用。
     mic_device_name: str | None = None
     speaker_device_name: str | None = None
-    silence_seconds: float = 0.8      # 连续安静多久算"说完了"
+    # 连续安静多久算"说完了"。0.8 -> 0.5 是为了反应更快，
+    # 代价是说话中间停顿久一点就会被当成说完（想改回去就设 XIAOYU_SILENCE_SECONDS=0.8）
+    silence_seconds: float = 0.5
     silence_threshold: float = 0.015  # 音量低于这个值算静音
     max_record_seconds: float = 15.0  # 单次最长录音，防止卡死
+    cue_enabled: bool = True          # 唤醒命中后播一声短提示音
 
 
 @dataclass(frozen=True)
@@ -224,7 +240,9 @@ class Settings:
                 speaker_device=_env_int("XIAOYU_SPK_DEVICE"),
                 mic_device_name=_env_str("XIAOYU_MIC_DEVICE_NAME"),
                 speaker_device_name=_env_str("XIAOYU_SPK_DEVICE_NAME"),
+                silence_seconds=_env_float("XIAOYU_SILENCE_SECONDS", 0.5),
                 silence_threshold=_env_float("XIAOYU_SILENCE_THRESHOLD", 0.015),
+                cue_enabled=_env_bool("XIAOYU_CUE_ENABLED", True),
             ),
             llm=LlmConfig(api_key=_read_secret("DEEPSEEK_API_KEY")),
         )

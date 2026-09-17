@@ -42,6 +42,15 @@ class Synthesizer:
         )
         await communicate.save(str(path))
 
+    @property
+    def speaker(self) -> Speaker:
+        """给外面播提示音用。
+
+        故意复用同一份 Speaker：另建一个会重新解析一次音频设备，
+        日志里会出现两次"扬声器就绪"，排查问题时很迷惑。
+        """
+        return self._speaker
+
     def speak(self, text: str) -> None:
         """合成一句并播放，等它放完才返回（播放期间必须保持闭麦）。"""
         text = text.strip()
