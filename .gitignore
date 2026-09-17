@@ -1,0 +1,43 @@
+# ================= Python =================
+__pycache__/
+*.py[cod]
+*.so
+build/
+dist/
+*.egg-info/
+.eggs/
+
+# ================= 虚拟环境 =================
+.venv/
+venv/
+env/
+
+# ================= 密钥（绝对不要提交）=================
+.env
+.env.local
+*.key
+
+# ================= 模型（体积大，不进 git）=================
+models/*
+!models/.gitkeep
+
+# ================= 数据 / 日志 / 音频产物 =================
+data/*
+!data/.gitkeep
+logs/*
+!logs/.gitkeep
+
+*.db
+*.sqlite3
+*.log
+*.mp3
+*.wav
+*.pcm
+
+# ================= 编辑器 / 系统 =================
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
+desktop.ini

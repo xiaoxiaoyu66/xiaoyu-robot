@@ -1,0 +1,17 @@
+# 统一换行符：Windows 上开发、以后搬到 Linux(N100) 运行都不会出问题
+* text=auto
+
+*.py   text eol=lf
+*.md   text eol=lf
+*.txt  text eol=lf
+*.sh   text eol=lf
+*.bat  text eol=crlf
+*.ps1  text eol=crlf
+
+# 二进制文件别动
+*.onnx  binary
+*.db    binary
+*.mp3   binary
+*.wav   binary
+*.zip   binary
+*.bz2   binary
