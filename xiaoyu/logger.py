@@ -18,6 +18,8 @@ from pathlib import Path
 
 from loguru import logger as _logger
 
+from .text import sanitize
+
 DEFAULT_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 
 _CONSOLE_FMT = (
@@ -45,6 +47,15 @@ _configured = False
 
 
 def _redact(text: str) -> str:
+    """抹掉密钥，顺带清掉无法编码的字符。
+
+    两件事必须一起做：
+        1. 密钥不能落盘；
+        2. 落盘的字符串必须真的能编码成 utf-8 —— 否则
+           文件 sink 那一层会抛 UnicodeEncodeError，
+           整条日志丢掉不说，还会往控制台喷一堆堆栈。
+    """
+    text = sanitize(text)
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(_REDACTED, text)
     return text
@@ -128,6 +139,7 @@ def setup_logging(
         retention=retention,
         compression="zip",       # 老日志自动压缩
         encoding="utf-8",
+        errors="backslashreplace",   # 编码兜底：再出现怪字符也只影响这一行，不会丢日志
         enqueue=True,            # 多线程 / 多进程安全
         backtrace=True,
         diagnose=False,          # 打开会把变量值写进日志，容易泄密，别开
@@ -142,6 +154,7 @@ def setup_logging(
         rotation="10 MB",
         retention="90 days",
         encoding="utf-8",
+        errors="backslashreplace",   # 编码兜底：再出现怪字符也只影响这一行，不会丢日志
         enqueue=True,
         backtrace=True,
         diagnose=False,

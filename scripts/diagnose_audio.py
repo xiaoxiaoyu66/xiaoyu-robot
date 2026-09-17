@@ -11,7 +11,8 @@
     python scripts\\diagnose_audio.py --record        # 顺便测麦克风
 
 确认好了就把编号写进 .env：
-    XIAOYU_SPK_DEVICE=4
+    XIAOYU_SPK_DEVICE_NAME=扬声器
+    XIAOYU_SPK_DEVICE=4               # 备用。编号会漂移，能填名字就填名字
 """
 
 from __future__ import annotations
@@ -25,7 +26,7 @@ import sounddevice as sd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from xiaoyu.audio.player import resolve_device
+from xiaoyu.audio.devices import resolve_device
 from xiaoyu.config import Settings
 from xiaoyu.logger import get_logger
 
@@ -94,8 +95,10 @@ def test_record(settings: Settings, play_device: int | None) -> None:
     print("录音测试")
     print("=" * 62)
 
-    index, name = resolve_device(settings.audio.mic_device, output=False)
-    print(f"将使用输入设备：{name}")
+    index, description = resolve_device(
+        settings.audio.mic_device, settings.audio.mic_device_name, output=False
+    )
+    print(f"将使用输入设备：{description}")
 
     seconds = 3.0
     print(f"对着麦克风说一句话，录 {seconds:.0f} 秒...")
@@ -140,8 +143,12 @@ def main(argv: list[str] | None = None) -> int:
 
     settings = Settings.load()
     _, default_in = sd.default.device
-    in_index, in_name = resolve_device(settings.audio.mic_device, output=False)
-    out_index, out_name = resolve_device(settings.audio.speaker_device, output=True)
+    in_index, in_name = resolve_device(
+        settings.audio.mic_device, settings.audio.mic_device_name, output=False
+    )
+    out_index, out_name = resolve_device(
+        settings.audio.speaker_device, settings.audio.speaker_device_name, output=True
+    )
 
     print("=" * 62)
     print("音频设备诊断")
@@ -166,6 +173,7 @@ def main(argv: list[str] | None = None) -> int:
     print("注意：只有真实喇叭才会响，显示器、未接音箱的 HDMI 都不会出声。\n")
 
     found: int | None = None
+    found_name: str | None = None
     for index, name, is_default in candidates:
         mark = "   ← 当前系统默认" if is_default else ""
         print(f"[{index:2}] {name}{mark}")
@@ -177,16 +185,18 @@ def main(argv: list[str] | None = None) -> int:
         if answer == "q":
             break
         if answer == "y":
-            found = index
+            found, found_name = index, name
             print(f"     -> 记下了：{index}\n")
             break
         print()
 
     print("=" * 62)
     if found is not None:
-        print("找到能出声的设备了。把这一行写进项目根目录的 .env：")
+        print("找到能出声的设备了。把下面这行写进项目根目录的 .env：")
         print()
-        print(f"    XIAOYU_SPK_DEVICE={found}")
+        print(f"    XIAOYU_SPK_DEVICE_NAME={found_name}")
+        print()
+        print(f"    XIAOYU_SPK_DEVICE={found}          # 备用；编号会漂移，优先用名字")
         print()
         print("写完重跑一次确认： python scripts\\check_audio.py")
     else:

@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import numpy as np
 
+from ..audio.devices import resolve_device
 from ..config import Settings
 from ..logger import get_logger
 from .models import load_vocab, pick_model_triple, prepare_keywords_file
@@ -94,13 +95,17 @@ class WakeWordDetector:
 
         cfg = self.settings.audio
         block_size = int(_BLOCK_SECONDS * cfg.sample_rate)
+        device, description = resolve_device(
+            cfg.mic_device, cfg.mic_device_name, output=False
+        )
+        logger.debug("唤醒监听输入设备 | {}", description)
         logger.info("待机中，等待唤醒词...")
 
         with sd.InputStream(
             samplerate=cfg.sample_rate,
             channels=cfg.channels,
             dtype="float32",
-            device=cfg.mic_device,
+            device=device,
         ) as stream:
             while True:
                 chunk, _ = stream.read(block_size)

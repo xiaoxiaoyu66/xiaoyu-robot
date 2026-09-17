@@ -13,6 +13,8 @@ import sounddevice as sd
 from ..config import AudioConfig
 from ..logger import get_logger
 
+from .devices import resolve_device
+
 logger = get_logger(__name__)
 
 
@@ -38,11 +40,14 @@ class Recorder:
 
     def __init__(self, config: AudioConfig) -> None:
         self.config = config
+        self._device, description = resolve_device(
+            config.mic_device, config.mic_device_name, output=False
+        )
         logger.debug(
             "录音器就绪 | 采样率={} | 声道={} | 设备={}",
             config.sample_rate,
             config.channels,
-            config.mic_device if config.mic_device is not None else "系统默认",
+            description,
         )
 
     def record_until_silence(self) -> np.ndarray:
@@ -60,7 +65,7 @@ class Recorder:
             samplerate=cfg.sample_rate,
             channels=cfg.channels,
             dtype="float32",
-            device=cfg.mic_device,
+            device=self._device,
         ) as stream:
             while total < cfg.max_record_seconds:
                 chunk, _ = stream.read(block_size)
@@ -99,7 +104,7 @@ class Recorder:
             samplerate=self.config.sample_rate,
             channels=self.config.channels,
             dtype="float32",
-            device=self.config.mic_device,
+            device=self._device,
         )
         sd.wait()
         logger.info("录音完成 | 峰值={:.3f}", float(np.abs(audio).max()))

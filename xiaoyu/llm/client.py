@@ -14,7 +14,7 @@ from collections.abc import Iterator
 
 from ..config import Settings
 from ..logger import get_logger
-from ..text import split_sentences
+from ..text import read_text, sanitize, split_sentences
 
 logger = get_logger(__name__)
 
@@ -55,7 +55,7 @@ class DeepSeekClient:
         if not path.exists():
             logger.warning("性格文件不存在，使用默认性格：{}", path)
             return _FALLBACK_PERSONA
-        text = path.read_text(encoding="utf-8").strip()
+        text = read_text(path).strip()
         if not text:
             logger.warning("性格文件是空的，使用默认性格")
             return _FALLBACK_PERSONA
@@ -93,7 +93,7 @@ class DeepSeekClient:
 
     def stream_reply(self, user_text: str) -> Iterator[str]:
         """流式对话，逐句 yield（可以直接喂给 speaker）。"""
-        user_text = user_text.strip()
+        user_text = sanitize(user_text).strip()
         if not user_text:
             return
 

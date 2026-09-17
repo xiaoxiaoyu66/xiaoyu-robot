@@ -3,10 +3,12 @@
 用 soundfile 解码 + sounddevice 输出。
 
 为什么不继续用 pygame：
-    pygame 的混音器自己挑输出设备，**没法跟着 .env 里的 XIAOYU_SPK_DEVICE 走**。
+    pygame 的混音器自己挑输出设备，**没法跟着 .env 里的设置走**。
     实测踩到的坑：当系统默认输出是显示器的 HDMI 音频时，
     TTS 的声音全进了显示器，笔记本扬声器一点动静都没有，而且非常难查。
     sounddevice 可以直接指定设备编号，和录音走同一套配置。
+
+设备怎么挑（编号会漂移这件事）见 xiaoyu/audio/devices.py 的说明。
 """
 
 from __future__ import annotations
@@ -19,35 +21,11 @@ import soundfile as sf
 
 from ..config import AudioConfig
 from ..logger import get_logger
+from .devices import resolve_device
 
 logger = get_logger(__name__)
 
-
-def resolve_device(configured: int | None, *, output: bool) -> tuple[int | None, str]:
-    """算出实际要用的设备编号，并给出人能看懂的名字。
-
-    返回 (编号, 描述)。configured 为 None 表示用系统默认设备。
-    """
-    try:
-        devices = sd.query_devices()
-        default_in, default_out = sd.default.device
-    except Exception as exc:
-        logger.warning("查询音频设备失败：{}", exc)
-        return configured, "未知"
-
-    if configured is None:
-        index = default_out if output else default_in
-        tag = "  ← 系统默认"
-    else:
-        index = configured
-        tag = ""
-
-    if index is None or index < 0:
-        return None, "系统默认（编号未知）"
-    try:
-        return index, f"[{index}] {devices[index]['name']}{tag}"
-    except Exception:
-        return index, f"[{index}]（编号无效，检查 .env 里的设置）"
+__all__ = ["Speaker", "resolve_device"]
 
 
 class Speaker:
@@ -55,10 +33,15 @@ class Speaker:
 
     def __init__(self, config: AudioConfig) -> None:
         self.config = config
-        self._device, description = resolve_device(config.speaker_device, output=True)
+        self._device, description = resolve_device(
+            config.speaker_device, config.speaker_device_name, output=True
+        )
         logger.info("扬声器就绪 | {}", description)
-        if config.speaker_device is None:
-            logger.debug("没有指定 XIAOYU_SPK_DEVICE，用的是系统默认输出设备")
+        if config.speaker_device is None and not config.speaker_device_name:
+            logger.warning(
+                "没有配置输出设备，用的是系统默认 —— 如果默认输出是显示器，"
+                "你会完全听不到声音。跑 python scripts\\diagnose_audio.py 选一个能出声的"
+            )
 
     @property
     def device(self) -> int | None:

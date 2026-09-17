@@ -9,6 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from ..logger import get_logger
+from ..text import read_text
 
 logger = get_logger(__name__)
 
@@ -49,7 +50,7 @@ def pick_model_triple(directory: Path) -> tuple[Path, Path, Path]:
 def load_vocab(tokens_file: Path) -> set[str]:
     """读取模型词表（音素集合）。"""
     vocab: set[str] = set()
-    for line in tokens_file.read_text(encoding="utf-8").splitlines():
+    for line in read_text(tokens_file).splitlines():
         parts = line.split()
         if parts:
             vocab.add(parts[0])
@@ -89,7 +90,7 @@ def prepare_keywords_file(
 
     kept: list[str] = []
     names: list[str] = []
-    for lineno, raw in enumerate(source.read_text(encoding="utf-8").splitlines(), start=1):
+    for lineno, raw in enumerate(read_text(source).splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith("#"):
             continue

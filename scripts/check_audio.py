@@ -19,7 +19,8 @@ import numpy as np
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from xiaoyu.audio.player import Speaker, resolve_device
+from xiaoyu.audio.devices import resolve_device
+from xiaoyu.audio.player import Speaker
 from xiaoyu.audio.recorder import Recorder, list_devices
 from xiaoyu.config import Settings
 from xiaoyu.logger import get_logger
@@ -36,11 +37,15 @@ def main() -> int:
     logger.info("S0 · 音频自检")
     logger.info("=" * 58)
 
-    _, in_name = resolve_device(settings.audio.mic_device, output=False)
-    _, out_name = resolve_device(settings.audio.speaker_device, output=True)
+    _, in_name = resolve_device(
+        settings.audio.mic_device, settings.audio.mic_device_name, output=False
+    )
+    _, out_name = resolve_device(
+        settings.audio.speaker_device, settings.audio.speaker_device_name, output=True
+    )
     logger.info("本次使用的输入设备：{}", in_name)
     logger.info("本次使用的输出设备：{}", out_name)
-    if settings.audio.speaker_device is None:
+    if settings.audio.speaker_device is None and not settings.audio.speaker_device_name:
         logger.warning(
             "没有指定输出设备，用的是系统默认。如果默认输出是显示器，"
             "你会听不到任何声音 —— 跑 python scripts\\diagnose_audio.py 找一个能出声的"
@@ -65,7 +70,7 @@ def main() -> int:
         logger.error("  1. Windows 设置 -> 隐私和安全性 -> 麦克风：允许桌面应用访问")
         logger.error("  2. 声音设置 -> 输入 -> 选中麦克风 -> 音量拉高、关闭自动增益")
         logger.error("  3. 麦克风被别的软件占用（微信 / 腾讯会议 / 游戏语音）")
-        logger.error("  4. 把上面设备清单里的输入编号填进 .env 的 XIAOYU_MIC_DEVICE")
+        logger.error("  4. \u628a\u4e0a\u9762\u6e05\u5355\u91cc\u7684\u8f93\u5165\u8bbe\u5907\u540d\u5b57\u586b\u8fdb .env \u7684 XIAOYU_MIC_DEVICE_NAME")
         logger.error("  5. 还是不行就跑 python scripts\\diagnose_audio.py")
         return 1
 

@@ -21,6 +21,7 @@ from . import __version__
 from .config import CheckItem, Settings
 from .logger import get_logger, setup_logging
 from .state import State, StateMachine
+from .text import sanitize
 
 logger = get_logger(__name__)
 
@@ -111,7 +112,7 @@ def run_text_mode(settings: Settings) -> None:
     try:
         while True:
             try:
-                text = input("你说 > ").strip()
+                text = sanitize(input("你说 > ").strip())
             except (EOFError, KeyboardInterrupt):
                 logger.info("收到退出信号")
                 break

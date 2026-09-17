@@ -6,6 +6,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 # 句末标点：见到这些就断句送去念
 HARD_ENDERS = "。！？!?…\n"
 # 软断点：一句话太长时在这里断开，降低"首句出声"的等待
@@ -70,3 +72,50 @@ def clean_for_speech(text: str) -> str:
         if cleaned.startswith(prefix):
             cleaned = cleaned[len(prefix) :].strip()
     return cleaned
+
+# ---------- 编码兜底 ----------
+
+# 读配置文件时按这个顺序试。
+# utf-8-sig 排第一：它和 utf-8 完全兼容，还能顺手吃掉记事本留下的 BOM。
+_TEXT_ENCODINGS = ("utf-8-sig", "gbk", "utf-16")
+
+
+def sanitize(text: str) -> str:
+    """把无法编码的字符换成可读的转义写法。
+
+    从管道、文件、系统 API 拿到的字符串里可能出现"孤立代理字符"
+    （解码失败留下的残渣，长得像 '\udc80'）。这种东西一旦流进 json 编码
+    或日志落盘，就会抛 UnicodeEncodeError，把整条链路炸掉 ——
+    实测踩过：一句坏文本能让日志文件写入失败，甚至整个对话回合挂掉。
+
+    统一在入口处换成 '\udc80' 这种字面写法，后面怎么编码都不会炸，
+    而且看日志时一眼就知道是编码坏了，不是内容本身长这样。
+
+    >>> sanitize("正常文本")
+    '正常文本'
+    """
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return text.encode("utf-8", "backslashreplace").decode("utf-8")
+    return text
+
+
+def read_text(path: str | Path) -> str:
+    """读文本文件，自动识别编码。
+
+    为什么不能直接 read_text(encoding="utf-8")：
+        中文 Windows 上，记事本和不少编辑器"另存为 ANSI"存出来的是 GBK。
+        配置文件（persona.md、keywords.txt）被存成 GBK 太常见了，
+        写死 utf-8 会直接抛 UnicodeDecodeError，报错信息对新手完全看不懂。
+
+    依次尝试 utf-8-sig -> gbk -> utf-16，都不行就用 utf-8 强行解码
+    （坏字节变成替换符），至少程序还能跑起来、还能看日志。
+    """
+    raw = Path(path).expanduser().read_bytes()
+    for encoding in _TEXT_ENCODINGS:
+        try:
+            return raw.decode(encoding)
+        except (UnicodeDecodeError, LookupError):
+            continue
+    return raw.decode("utf-8", errors="replace")

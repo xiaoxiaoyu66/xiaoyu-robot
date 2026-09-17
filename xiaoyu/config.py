@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from .logger import get_logger
+from .text import read_text
 
 logger = get_logger(__name__)
 
@@ -52,7 +53,7 @@ def _load_dotenv(path: Path) -> None:
         logger.debug("已通过 python-dotenv 加载 {}", path.name)
         return
 
-    for raw in path.read_text(encoding="utf-8").splitlines():
+    for raw in read_text(path).splitlines():
         line = raw.strip()
         if not line or line.startswith("#") or "=" not in line:
             continue
@@ -75,6 +76,12 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+def _env_str(name: str) -> str | None:
+    """读一个字符串环境变量，空白一律当成没设置。"""
+    value = os.environ.get(name, "").strip()
+    return value or None
+
+
 def _read_secret(name: str) -> str | None:
     """读取密钥。绝不要把密钥写进代码里。
 
@@ -93,7 +100,7 @@ def _read_secret(name: str) -> str | None:
         return None
 
     try:
-        content = Path(path).expanduser().read_text(encoding="utf-8").strip()
+        content = read_text(path).strip()
     except OSError as exc:
         logger.error("读取密钥文件失败 {}：{}", path, exc)
         return None
@@ -146,6 +153,10 @@ class AudioConfig:
     channels: int = 1
     mic_device: int | None = None
     speaker_device: int | None = None
+    # 按名字选设备，比编号稳。编号会在两次运行之间漂移（实测 [3] <-> [4] 互换过），
+    # 名字基本不变。两个都填时以名字为准，编号只当备用。
+    mic_device_name: str | None = None
+    speaker_device_name: str | None = None
     silence_seconds: float = 0.8      # 连续安静多久算"说完了"
     silence_threshold: float = 0.015  # 音量低于这个值算静音
     max_record_seconds: float = 15.0  # 单次最长录音，防止卡死
@@ -211,6 +222,8 @@ class Settings:
             audio=AudioConfig(
                 mic_device=_env_int("XIAOYU_MIC_DEVICE"),
                 speaker_device=_env_int("XIAOYU_SPK_DEVICE"),
+                mic_device_name=_env_str("XIAOYU_MIC_DEVICE_NAME"),
+                speaker_device_name=_env_str("XIAOYU_SPK_DEVICE_NAME"),
                 silence_threshold=_env_float("XIAOYU_SILENCE_THRESHOLD", 0.015),
             ),
             llm=LlmConfig(api_key=_read_secret("DEEPSEEK_API_KEY")),
