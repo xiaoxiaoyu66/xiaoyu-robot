@@ -5,14 +5,14 @@
     2. 每个模块顶部写：logger = get_logger(__name__)
     3. 日志同时进 控制台（带颜色）和 文件（可回溯、按天切分）
 
-产物：
-    logs/xiaoyu_YYYY-MM-DD.log   全量日志，按天切分，保留 14 天，自动压缩
-    logs/error.log               只记 ERROR 以上，保留 90 天，排查用
+安全：所有出口都挂了脱敏过滤器（见 _redact_record）。
+密钥一旦写进日志文件就是永久留痕，所以在落盘前就替换掉。
 """
 
 from __future__ import annotations
 
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -32,7 +32,62 @@ _FILE_FMT = (
     "{extra[module]} | {name}:{function}:{line} | {message}"
 )
 
+# 长得像密钥的东西，一律在写盘前替换掉
+_SECRET_PATTERNS = (
+    re.compile(r"sk-[A-Za-z0-9_\-]{8,}"),
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9_\-\.]{8,}"),
+    re.compile(r"(?i)\b(api[_-]?key|token|secret|password)\b\s*[=:]\s*\S{8,}"),
+)
+
+_REDACTED = "<已脱敏>"
+
 _configured = False
+
+
+def _redact(text: str) -> str:
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(_REDACTED, text)
+    return text
+
+
+def _redact_record(record) -> bool:
+    """loguru 过滤器：把密钥从日志里抹掉。
+
+    两条铁律：
+        1. 返回值必须是 True，否则这条日志会被整个丢掉。
+        2. 里面绝不允许抛异常 —— 过滤器一崩，日志系统就整体瘫痪。
+           所以整个函数体包在 try 里，脱敏失败也必须让日志照常输出。
+    """
+    try:
+        record["message"] = _redact(record.get("message") or "")
+
+        # 注意：record 里不一定有 args / exception 这两个键，必须用 get
+        args = record.get("args")
+        if args:
+            record["args"] = tuple(
+                _redact(item) if isinstance(item, str) else item for item in args
+            )
+
+        exception = record.get("exception")
+        if exception is not None:
+            etype, evalue, etb = exception
+            if evalue is not None:
+                original = str(evalue)
+                redacted = _redact(original)
+                if redacted != original:
+                    try:
+                        record["exception"] = type(exception)(
+                            etype, type(evalue)(redacted), etb
+                        )
+                    except Exception:
+                        # 有些异常类需要多个构造参数，退化处理，至少把原文遮掉
+                        record["exception"] = type(exception)(
+                            etype, RuntimeError(redacted), etb
+                        )
+    except Exception:
+        # 宁可少脱敏一次，也不能让日志系统崩掉
+        pass
+    return True
 
 
 def setup_logging(
@@ -61,6 +116,7 @@ def setup_logging(
             colorize=True,
             backtrace=False,
             diagnose=False,
+            filter=_redact_record,      # 脱敏
         )
 
     # 全量日志：文件里永远记 DEBUG，控制台可以用 XIAOYU_LOG_LEVEL 控制
@@ -75,6 +131,7 @@ def setup_logging(
         enqueue=True,            # 多线程 / 多进程安全
         backtrace=True,
         diagnose=False,          # 打开会把变量值写进日志，容易泄密，别开
+        filter=_redact_record,   # 脱敏
     )
 
     # 只记错误的日志：出问题时第一个看这个
@@ -88,6 +145,7 @@ def setup_logging(
         enqueue=True,
         backtrace=True,
         diagnose=False,
+        filter=_redact_record,   # 脱敏
     )
 
     sys.excepthook = _handle_uncaught

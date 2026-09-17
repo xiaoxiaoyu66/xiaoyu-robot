@@ -9,7 +9,14 @@
 
 改唤醒词 -> config/keywords.txt
 改性格   -> config/persona.md
-改密钥   -> .env
+改密钥   -> .env（推荐）或系统环境变量
+
+密钥绝对不会硬编码在本文件里。读取顺序：
+    1. 环境变量 DEEPSEEK_API_KEY
+    2. 环境变量 DEEPSEEK_API_KEY_FILE 指向的文件内容
+    3. 项目根目录 .env 里的 DEEPSEEK_API_KEY
+
+日志出口有脱敏过滤器，就算误把密钥打进日志也会被替换成 <已脱敏>。
 """
 
 from __future__ import annotations
@@ -68,7 +75,40 @@ def _env_int(name: str) -> int | None:
         return None
 
 
+def _read_secret(name: str) -> str | None:
+    """读取密钥。绝不要把密钥写进代码里。
+
+    优先环境变量；没有就看 <NAME>_FILE 指向的文件。
+
+    为什么还要支持文件：
+        环境变量会被子进程继承，在某些机器上 ps / 任务管理器能看到。
+        放到一个只读文件里（比如以后在 N100 上跑），能少一个泄露面。
+    """
+    value = os.environ.get(name, "").strip()
+    if value:
+        return value
+
+    path = os.environ.get(f"{name}_FILE", "").strip()
+    if not path:
+        return None
+
+    try:
+        content = Path(path).expanduser().read_text(encoding="utf-8").strip()
+    except OSError as exc:
+        logger.error("读取密钥文件失败 {}：{}", path, exc)
+        return None
+
+    if not content:
+        logger.error("密钥文件是空的：{}", path)
+        return None
+
+    logger.info("已从文件读取密钥（{}），内容不打印", path)
+    return content
+
+
 def _env_float(name: str, default: float) -> float:
+
+
     raw = os.environ.get(name, "").strip()
     if not raw:
         return default
@@ -173,7 +213,7 @@ class Settings:
                 speaker_device=_env_int("XIAOYU_SPK_DEVICE"),
                 silence_threshold=_env_float("XIAOYU_SILENCE_THRESHOLD", 0.015),
             ),
-            llm=LlmConfig(api_key=os.environ.get("DEEPSEEK_API_KEY") or None),
+            llm=LlmConfig(api_key=_read_secret("DEEPSEEK_API_KEY")),
         )
         settings.paths.ensure_dirs()
         logger.info(
@@ -240,7 +280,7 @@ class Settings:
             CheckItem(
                 "DeepSeek API Key",
                 self.llm.has_key,
-                ".env 里的 DEEPSEEK_API_KEY",
+                ".env 或系统环境变量 DEEPSEEK_API_KEY",
             )
         )
         return items
