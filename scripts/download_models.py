@@ -63,6 +63,27 @@ MODELS: list[ModelItem] = [
         archive=False,
         hint="",
     ),
+    ModelItem(
+        name="语音合成模型（Matcha 中文，默认）",
+        url=f"{_RELEASE}/tts-models/matcha-icefall-zh-baker.tar.bz2",
+        dest=PROJECT_ROOT / "models" / "tts" / "matcha-icefall-zh-baker",
+        archive=True,
+        hint="*.onnx",
+    ),
+    ModelItem(
+        name="声码器（Matcha 必备，单独一个 release）",
+        url=f"{_RELEASE}/vocoder-models/vocos-22khz-univ.onnx",
+        dest=PROJECT_ROOT / "models" / "tts" / "vocos-22khz-univ.onnx",
+        archive=False,
+        hint="",
+    ),
+    ModelItem(
+        name="语音合成模型（Piper 中文女声，更快的备选）",
+        url=f"{_RELEASE}/tts-models/vits-piper-zh_CN-huayan-medium.tar.bz2",
+        dest=PROJECT_ROOT / "models" / "tts" / "vits-piper-zh_CN-huayan-medium",
+        archive=True,
+        hint="*.onnx",
+    ),
 ]
 
 
@@ -78,7 +99,12 @@ def _download(url: str, target: Path) -> None:
     started = time.perf_counter()
     last_report = -1.0
 
-    with urllib.request.urlopen(url, timeout=60) as response:  # noqa: S310
+    # 必须带 User-Agent：国内几个 GitHub 加速镜像会直接拒掉没有 UA 的请求，
+    # 表现出来就是"连接建立了但永远不下数据"。
+    request = urllib.request.Request(
+        url, headers={"User-Agent": "Mozilla/5.0 (XiaoYu Robot model downloader)"}
+    )
+    with urllib.request.urlopen(request, timeout=60) as response:  # noqa: S310
         total = int(response.headers.get("Content-Length") or 0)
         downloaded = 0
         with open(target, "wb") as fh:
@@ -129,6 +155,11 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="下载 XiaoYu Robot 需要的模型")
     parser.add_argument("--prefix", default="", help="在下载地址前加的代理前缀，用于加速")
     parser.add_argument("--force", action="store_true", help="已存在也重新下载")
+    parser.add_argument(
+        "--only",
+        default="",
+        help="只处理名字或网址里含这个字串的模型（调试用）",
+    )
     args = parser.parse_args(argv)
 
     logger.info("=" * 58)
@@ -137,6 +168,8 @@ def main(argv: list[str] | None = None) -> int:
 
     failed: list[str] = []
     for item in MODELS:
+        if args.only and args.only not in item.name and args.only not in item.url:
+            continue
         logger.info("-" * 58)
         logger.info("【{}】", item.name)
 

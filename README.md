@@ -47,7 +47,7 @@ XiaoYu Robot/
 │  ├─ audio/               录音器、扬声器、设备清单
 │  ├─ wake/                唤醒词（KWS；models.py 是纯逻辑，kws.py 跑模型）
 │  ├─ asr/                 语音转文字（SenseVoice）
-│  ├─ tts/                 文字转语音（edge-tts）
+│  ├─ tts/                 文字转语音（本地 sherpa-onnx，可切 edge-tts）
 │  ├─ llm/                 大模型对话（DeepSeek 流式）
 │  ├─ memory/              记忆（SQLite，向量检索预留）
 │  └─ vision/              视觉（S6 占位）
@@ -67,7 +67,8 @@ XiaoYu Robot/
 ```
 
 **分层原则**：`app.py` 负责编排，各子包只负责自己的那一件事，互不越界。
-要换掉某个部件（比如把 edge-tts 换成 Piper），只改对应子包，其他地方不动。
+要换掉某个部件（比如把本地 TTS 换成 GPT-SoVITS），只改对应子包，其他地方不动。
+`xiaoyu/tts/engine.py` 就是干这个的：加一个类，别的代码一行不用改。
 
 ---
 

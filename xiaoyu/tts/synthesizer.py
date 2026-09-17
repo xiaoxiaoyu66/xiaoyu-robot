@@ -1,24 +1,36 @@
-"""文字转语音：edge-tts。
+"""文字转语音：把大模型吐出来的句子，一句一句变成声音放出来。
 
-为什么不一开始用 Piper：Piper 的中文音色偏机械，而 edge-tts 免费、
-中文很自然、一行就能装好。代价是第一次合成要联网。
-以后想彻底离线，再换 Piper；想更像人，上 GPT-SoVITS 克隆音色。
+两个关键设计：
+
+1. **引擎可换**（细节见 engine.py）
+   默认用本地 sherpa-onnx。因为 edge-tts 每句话都要连一次微软的服务器，
+   实测首块音频 0.88~11.76 秒；本地只要 0.1~0.3 秒。
+
+2. **合成和播放重叠**（这是本类存在的主要理由）
+   旧版是"合成 -> 播放 -> 合成 -> 播放"串行的，每句话的合成时间
+   都白白加到总时长上。
+   现在合成在主线程、播放在另一个线程，中间用一个容量 2 的队列连着：
+   放第一句的时候，第二句已经在合成了。
+   容量故意只有 2 —— 攒太多的话，将来做打断功能时，
+   用户一插话还要等一堆没用的音频放完。
 """
 
 from __future__ import annotations
 
-import asyncio
+import threading
 import time
 from collections.abc import Iterable
-from pathlib import Path
+from queue import Queue
 
 from ..audio.player import Speaker
 from ..config import Settings
 from ..logger import get_logger
+from .engine import Speech, build_engine
 
 logger = get_logger(__name__)
 
-_CACHE_KEEP = 20  # 最多保留多少个合成缓存文件
+# 最多"提前合成"几句。2 = 正在放的那句 + 已经备好的一句。
+_QUEUE_SIZE = 2
 
 
 class Synthesizer:
@@ -27,20 +39,15 @@ class Synthesizer:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self._cfg = settings.tts
-        self._cache_dir = settings.paths.data / "tts_cache"
-        self._cache_dir.mkdir(parents=True, exist_ok=True)
         self._speaker = Speaker(settings.audio)
+        self._engine = build_engine(settings)
         logger.info(
-            "语音合成就绪 | 音色={} | 语速={}", self._cfg.voice, self._cfg.rate
+            "语音合成就绪 | 引擎={} | 采样率={}Hz",
+            self._engine.name, getattr(self._engine, "samplerate", "?"),
         )
-
-    async def _synthesize(self, text: str, path: Path) -> None:
-        import edge_tts
-
-        communicate = edge_tts.Communicate(
-            text, self._cfg.voice, rate=self._cfg.rate, volume=self._cfg.volume
-        )
-        await communicate.save(str(path))
+        # 先把模型跑热。不做这一步，用户听到的第一句会莫名其妙慢好几秒 ——
+        # 而那恰好是他最在意的一次。
+        self._engine.warmup()
 
     @property
     def speaker(self) -> Speaker:
@@ -51,42 +58,77 @@ class Synthesizer:
         """
         return self._speaker
 
+    @property
+    def engine_name(self) -> str:
+        return self._engine.name
+
     def speak(self, text: str) -> None:
-        """合成一句并播放，等它放完才返回（播放期间必须保持闭麦）。"""
+        """合成一句话并放完（阻塞）。主要给调试和单句场景用。"""
         text = text.strip()
         if not text:
             return
-
-        path = self._cache_dir / f"reply_{int(time.time() * 1000)}.mp3"
-        started = time.perf_counter()
         try:
-            asyncio.run(self._synthesize(text, path))
+            speech = self._engine.synthesize(text)
         except Exception:
-            logger.exception("语音合成失败，跳过这句：{}", text[:30])
+            logger.exception("合成失败，跳过这句：{}", text[:30])
             return
-
-        logger.debug("合成完成 {:.2f} 秒 -> {}", time.perf_counter() - started, path.name)
-        self._speaker.play_file(path, wait=True)
-        self._cleanup()
+        self._speaker.play_array(speech.samples, speech.samplerate)
 
     def speak_stream(self, sentences: Iterable[str]) -> None:
-        """一句一句地念 —— 这是"首句 2.5 秒内出声"的关键。
-        不要等整段回答生成完再合成。"""
+        """一边收句子一边说：**播放和合成是重叠的**。
+
+        sentences 通常是大模型流式回复切出来的句子生成器，
+        所以这个循环会边等模型吐字、边合成、边播放。
+        """
+        started = time.perf_counter()
+        queue: Queue[Speech | None] = Queue(maxsize=_QUEUE_SIZE)
+        first_audio_logged = False
+
+        def player() -> None:
+            nonlocal first_audio_logged
+            while True:
+                speech = queue.get()
+                if speech is None:
+                    return
+                if not first_audio_logged:
+                    first_audio_logged = True
+                    logger.info(
+                        "首句出声 | 从收到回复算起 {:.2f} 秒（这就是用户实际等的时间）",
+                        time.perf_counter() - started,
+                    )
+                try:
+                    self._speaker.play_array(speech.samples, speech.samplerate)
+                except Exception:
+                    logger.exception("播放失败，跳过这句")
+
+        player_thread = threading.Thread(
+            target=player, name="xiaoyu-tts-player", daemon=True
+        )
+        player_thread.start()
+
         count = 0
-        for sentence in sentences:
-            if not sentence.strip():
-                continue
-            count += 1
-            if count == 1:
-                logger.info("开始说话（首句）：{}", sentence.strip()[:40])
-            self.speak(sentence)
+        try:
+            for sentence in sentences:
+                text = sentence.strip()
+                if not text:
+                    continue
+                count += 1
+                if count == 1:
+                    logger.info("开始说（首句）：{}", text[:40])
+                try:
+                    speech = self._engine.synthesize(text)
+                except Exception:
+                    # 一句合成失败不该把整轮回复废掉，跳过继续
+                    logger.exception("合成失败，跳过这句：{}", text[:30])
+                    continue
+                queue.put(speech)          # 队列满时会在这里等，天然限流
+        finally:
+            queue.put(None)
+            player_thread.join()
+
         if count == 0:
             logger.warning("没有可播放的内容")
-
-    def _cleanup(self) -> None:
-        files = sorted(self._cache_dir.glob("reply_*.mp3"), key=lambda p: p.stat().st_mtime)
-        for old in files[:-_CACHE_KEEP]:
-            try:
-                old.unlink()
-            except OSError:
-                pass
+        else:
+            logger.debug(
+                "本轮说了 {} 句，总耗时 {:.2f} 秒", count, time.perf_counter() - started
+            )

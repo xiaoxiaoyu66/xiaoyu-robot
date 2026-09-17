@@ -94,6 +94,8 @@ def _next_step_hint(name: str) -> str:
         return "新建 config\\persona.md，写它的人设"
     if name == "DeepSeek API Key":
         return "复制 .env.example 为 .env，填入 DEEPSEEK_API_KEY"
+    if name == "语音合成模型":
+        return "python scripts\\download_models.py --prefix https://gh-proxy.com/"
     return ""
 
 
@@ -107,6 +109,8 @@ def run_text_mode(settings: Settings) -> None:
     memory = MemoryStore(settings)
     synthesizer = Synthesizer(settings)
     client = DeepSeekClient(settings, memory=memory)
+    # 先把连接建好，省得第一句话白等 1.5 秒
+    client.warmup()
 
     state = StateMachine()
     try:
@@ -170,6 +174,9 @@ def run_voice_loop(settings: Settings) -> None:
     synthesizer = Synthesizer(settings)
     client = DeepSeekClient(settings, memory=memory)
     detector = WakeWordDetector(settings)
+    # 后台把对话连接建好。待机可能几十分钟，连接早被回收了，
+    # 不预热的话每次“第一句话”都要多等 1.5 秒。
+    client.warmup_async()
 
     logger.info("全部就绪，开始待机。按 Ctrl+C 退出。")
     try:
@@ -177,6 +184,7 @@ def run_voice_loop(settings: Settings) -> None:
             state.set(State.IDLE, "等待唤醒")
             detector.listen_once()
             play_cue(synthesizer, sfx.ACK, settings)      # 先应一声，别让人干等
+            client.warmup_async()   # 接下来要录音+识别，正好拿这段时间把连接建好
 
             for round_index in range(1, FOLLOW_UP_ROUNDS + 1):
                 state.set(State.LISTENING, f"第 {round_index} 轮")

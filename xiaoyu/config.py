@@ -146,6 +146,7 @@ class Paths:
     kws: Path = PROJECT_ROOT / "models" / "kws"
     asr: Path = PROJECT_ROOT / "models" / "sense-voice"
     vad_model: Path = PROJECT_ROOT / "models" / "silero_vad.onnx"
+    tts: Path = PROJECT_ROOT / "models" / "tts"
     data: Path = PROJECT_ROOT / "data"
     logs: Path = PROJECT_ROOT / "logs"
     config: Path = PROJECT_ROOT / "config"
@@ -194,10 +195,19 @@ class AsrConfig:
 
 @dataclass(frozen=True)
 class TtsConfig:
+    # 合成引擎：local 用本地 sherpa-onnx（快），edge 用微软云端（好听但慢）
+    # 实测：edge 首块音频 0.88~11.76 秒，本地 0.1~0.3 秒
+    engine: str = "local"
+    # ---- edge 引擎用 ----
     voice: str = "zh-CN-XiaoxiaoNeural"
     rate: str = "+0%"                 # 语速，例如 "+10%"
     volume: str = "+0%"
-
+    # ---- local 引擎用 ----
+    local_model: str = "vits-piper-zh_CN-huayan-medium"   # models/tts/ 下的目录名
+    vocoder: str = ""                 # 只有 matcha 系模型需要（单独的 onnx 文件名）
+    speaker_id: int = 0               # 多音色模型用
+    speed: float = 1.0                # 1.0 = 原速，大于 1 更快
+    num_threads: int = 2
 
 @dataclass(frozen=True)
 class LlmConfig:
@@ -244,6 +254,16 @@ class Settings:
                 silence_threshold=_env_float("XIAOYU_SILENCE_THRESHOLD", 0.015),
                 cue_enabled=_env_bool("XIAOYU_CUE_ENABLED", True),
             ),
+            tts=TtsConfig(
+                engine=(_env_str("XIAOYU_TTS_ENGINE") or "local").lower(),
+                voice=_env_str("XIAOYU_TTS_VOICE") or "zh-CN-XiaoxiaoNeural",
+                local_model=_env_str("XIAOYU_TTS_MODEL")
+                or "vits-piper-zh_CN-huayan-medium",
+                vocoder=_env_str("XIAOYU_TTS_VOCODER") or "",
+                speaker_id=_env_int("XIAOYU_TTS_SID") or 0,
+                speed=_env_float("XIAOYU_TTS_SPEED", 1.0),
+                num_threads=_env_int("XIAOYU_TTS_THREADS") or 2,
+            ),
             llm=LlmConfig(api_key=_read_secret("DEEPSEEK_API_KEY")),
         )
         settings.paths.ensure_dirs()
@@ -286,6 +306,7 @@ class Settings:
 
         items.append(self._check_kws())
         items.append(self._check_asr())
+        items.append(self._check_tts())
         items.append(
             CheckItem(
                 "VAD 模型",
@@ -315,6 +336,31 @@ class Settings:
             )
         )
         return items
+
+    def _check_tts(self) -> "CheckItem":
+        """检查语音合成。edge 引擎只要联网，本地引擎要模型。
+
+        这里有意不去 import tts.engine：engine 反过来要 import
+        config 里的 Settings，循环导入会直接炸掉。
+        所以这里只做最粗的"文件在不在"检查。
+        """
+        if self.tts.engine != "local":
+            return CheckItem("语音合成模型", True, "用 edge-tts（云端，不占本地）")
+
+        model_dir = self.paths.tts / self.tts.local_model
+        if not model_dir.is_dir():
+            return CheckItem(
+                "语音合成模型", False, f"缺少目录 models/tts/{self.tts.local_model}/"
+            )
+        if not list(model_dir.glob("*.onnx")) or not (model_dir / "tokens.txt").exists():
+            return CheckItem(
+                "语音合成模型", False, f"{self.tts.local_model}/ 里缺 .onnx 或 tokens.txt"
+            )
+        if self.tts.vocoder and not (self.paths.tts / self.tts.vocoder).exists():
+            return CheckItem(
+                "语音合成模型", False, f"缺少声码器 {self.tts.vocoder}"
+            )
+        return CheckItem("语音合成模型", True, self.tts.local_model)
 
     def _check_kws(self) -> "CheckItem":
         d = self.paths.kws

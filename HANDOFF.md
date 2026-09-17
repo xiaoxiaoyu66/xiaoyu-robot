@@ -6,13 +6,15 @@
 > 所以这里**只写事实和实测证据，不写猜测**。改了代码就回来更新它，
 > 尤其是"待办"和"现状"两节，过期的交接文档比没有更糟。
 >
-> 最后更新：2026-09-17 晚
+> 最后更新：2026-09-17 夜（延迟优化收尾）
 
 ---
 
 ## 0. 一句话现状
 
 **S0（音频自检）已通过，S1（能听会说）的文字模式已跑通并验证。**
+**"反应慢"这件事已经做完**（2026-09-17 夜）：TTS 换成本地 sherpa-onnx，
+再把 DeepSeek 的连接预热做掉，首句出声从 3~13 秒降到 **0.6 秒**。
 **S1 的语音模式（麦克风 + 唤醒词）还没有被真人完整验证过** —— 这是下一件要干的事。
 
 代码在 `D:\JavaAI\XiaoYu Robot`（**路径里有空格**，写脚本时记得加引号）。
@@ -47,12 +49,14 @@
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 66 个，全过）
+python -m unittest discover tests        # 跑测试（当前 86 个，全过）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
 python -m xiaoyu                         # 语音模式：唤醒词 -> 录音 -> 识别 -> 回答
 python scripts\check_audio.py            # 列出所有音频设备 + 录 3 秒回放
 python scripts\diagnose_audio.py         # 挨个设备放提示音，找出哪个真的会响
+python scripts\bench_latency.py          # 量延迟：TTS 合成速度 + 大模型首句（会真的调 API）
+python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花钱
 ```
 
 **提交时的坑**：commit message 用 `git commit -F <临时文件>` 传。
@@ -69,8 +73,10 @@ python scripts\diagnose_audio.py         # 挨个设备放提示音，找出哪�
 - S0 音频自检：用户亲耳听到回放，确认通过。
 - S1 文字模式：`python -m xiaoyu --text`，中文输入 → DeepSeek 回复 → TTS 说出，
   扬声器正确落到 `[3] 扬声器 (Realtek(R) Audio)`。
-- 单元测试 66 个全过；17 个模块导入正常。
+- 单元测试 86 个全过；17 个模块导入正常。
 - 三种提示音（ack / done / error）已在真实扬声器上播出。
+- **延迟优化已实测**：`python -m xiaoyu --text` 日志显示"首句出声 0.61 秒"。
+  本地 TTS 两个候选模型（piper-huayan / matcha-baker）都跑通，RTF 都在 0.06~0.08。
 
 ### 未验证（别当成已完成）
 
@@ -131,11 +137,25 @@ python scripts\diagnose_audio.py         # 挨个设备放提示音，找出哪�
    用 `sorted(glob())[0]` 会拼出组合不起来的三个文件。
    → 改成只挑"三件齐全且后缀一致"的一组。
 
+8. **声码器和模型目录是并排放的，"旁边有 vocoder 就当 matcha"是错的**。
+   sherpa-onnx 官方把模型都堆在 `models/tts/` 下：
+   `models/tts/vocos-22khz-univ.onnx`（声码器）和 `models/tts/vits-piper-.../`（模型目录）**并排**。
+   照"找得到声码器就按 matcha 加载"去判断，piper 会被当成 matcha，
+   加载时报一个完全看不懂的错：`'use_eos_bos' does not exist in the metadata`。
+   → 只能看模型**自己**的文件名：Matcha 的声学模型叫 `model-steps-N.onnx`，其余一律当 vits。
+   `resolve_model_files()` 的 `_looks_like_matcha()` 就是这个判据，
+   `tests/test_tts_engine.py::test_vocoder_next_door_is_not_matcha` 是它的回归测试。
+
+9. **git 下载镜像只有 `https://gh-proxy.com/` 在这台机器上可用**（1.28 MB/s）。
+   而且**必须带 User-Agent**，否则连接能建起来但永远不传数据（看起来像卡死）。
+   `ghfast.top` / `ghproxy.net` / `gh.llkk.cc` / `github.moeyy.xyz` 全部失败。
+   `scripts/download_models.py` 已经带上了 UA，也支持 `--prefix` 和 `--only`。
+
 ---
 
 ## 6. 下一步 TODO（按优先级）
 
-### 🔴 P0 · 明天第一件事：把 TTS 换成本地 sherpa-onnx
+### ✅ 已完成（2026-09-17 夜）：TTS 换成本地 sherpa-onnx + 大模型连接预热
 
 **为什么**：实测 edge-tts 出第一块音频要 **0.88 ~ 11.76 秒**，另外 2 次直接失败
 （连接超时 / 握手失败）。**每句话都要重新握手一次**，回三句话就是抽三次奖。
@@ -151,6 +171,24 @@ python scripts\diagnose_audio.py         # 挨个设备放提示音，找出哪�
 
 **要求**：**保留 edge-tts 作为可切换的"高音质模式"**，别直接删掉 ——
 本地音质不如晓晓。用配置开关切换（用户可以自己对比）。
+
+**实际做法**：
+- 新增 `xiaoyu/tts/engine.py`（引擎抽象：`SherpaEngine` / `EdgeEngine`，`build_engine()` 按配置选）。
+- 重写 `xiaoyu/tts/synthesizer.py`：合成在主线程、播放在 daemon 线程，中间一个容量 2 的队列 ——
+  **放第一句的时候第二句已经在合成**。
+- 下载了 `vits-piper-zh_CN-huayan-medium`（60MB）和 `matcha-icefall-zh-baker`（72MB + 声码器 51MB），
+  默认用 piper。切模型只改 `.env` 的 `XIAOYU_TTS_MODEL`。
+
+**顺手做掉的第二件事：DeepSeek 连接预热**（这个才是"第一句话"最难受的那段）。
+实测同一个问题，**第一次请求 2.0~2.3 秒，之后只要 0.5~0.8 秒**；
+把历史对话从 0 轮堆到 40 轮，首句耗时几乎不变 —— 所以那多出来的 1.5 秒**全是建连接**
+（TCP + TLS 握手），跟问什么没关系。加了 `DeepSeekClient.warmup()` / `warmup_async()`：
+启动时异步预热一次，唤醒词命中后再异步预热一次（正好和录音+识别并行）。
+实测首句 **2.05 秒 → 0.41 秒**。
+
+**还没定的事**：用户要**盲听挑音色**，文件已经生成好了：
+`data/voice_1_huayan.wav`（piper）和 `data/voice_2_baker.wav`（matcha），同一句话。
+两个延迟一样，纯看喜好，听完改 `.env` 的 `XIAOYU_TTS_MODEL` 就行。
 
 ### 🟠 P1 · 真人验证语音模式
 
@@ -186,9 +224,25 @@ python scripts\diagnose_audio.py         # 挨个设备放提示音，找出哪�
 | 环节 | 实测耗时 | 说明 |
 |------|----------|------|
 | VAD 等你说完 | 0.5 秒 | 可调（`XIAOYU_SILENCE_SECONDS`），原为 0.8 |
-| SenseVoice 识别 | 0.2~0.5 秒 | 本地，够快 |
-| DeepSeek 出第一个字 | **1.5~2.8 秒** | 云端模型正常水平，不是瓶颈 |
-| **edge-tts 出第一块音频** | **0.88 / 1.13 / 3.17 / 3.23 / 5.11 / 9.33 / 10.10 / 11.76 秒** | **瓶颈。另有 2 次直接失败** |
+| SenseVoice 识别 | 0.13~0.15 秒 | 本地。**反复调都一样，没有冷启动问题，不用预热** |
+| DeepSeek 出第一句（冷连接） | **1.99~2.29 秒** | 其中约 1.5 秒是 TCP + TLS 握手 |
+| DeepSeek 出第一句（预热后） | **0.53 / 0.61 / 0.65 秒** | 历史 0~40 轮都一样，跟上下文长度无关 |
+| **本地 TTS 合成一句** | **0.037 ~ 0.35 秒** | RTF 0.053~0.080。33 字的长句也只要 0.33 秒 |
+| local TTS 加载模型 | 1.4~1.9 秒 | 启动时一次性，`warmup()` 之后不算在回复里 |
+| ~~edge-tts 出第一块音频~~ | ~~0.88~11.76 秒~~ | **已弃用为可选项，另有 2 次直接失败** |
+
+**用户实际等多久（从你说完话到它开口）**：
+
+    VAD 0.5 + 识别 0.14 + 大模型首句 0.6 + 合成 0.1 ≈ 1.35 秒
+
+改造前这条链是 `0.5 + 0.3 + 2.3 + 4（edge-tts 中位数）≈ 7 秒`。
+
+**两个候选音色的实测对比**（Ryzen 5 5600H，2026-09-17）：
+
+| 模型 | 大小 | 加载 | 合成 33 字 | RTF | 备注 |
+|------|------|------|-----------|-----|------|
+| `vits-piper-zh_CN-huayan-medium` | 60MB | 1.4s | 0.32s | 0.057 | 自带声码器；**默认** |
+| `matcha-icefall-zh-baker` | 72MB | 1.9s | 0.36s | 0.059 | 要配 `vocos-22khz-univ.onnx`（51MB）；有 OOV 警告 |
 
 声卡现状（2026-09-17 实测，MME 这一组）：
 
