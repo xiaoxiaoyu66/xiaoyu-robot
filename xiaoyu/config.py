@@ -246,7 +246,7 @@ class Settings:
             ("numpy", "音频计算"),
             ("sherpa_onnx", "唤醒 + 语音识别"),
             ("edge_tts", "语音合成"),
-            ("pygame", "播放 mp3"),
+            ("soundfile", "解码 mp3 / 音频文件"),
             ("openai", "大模型对话"),
             ("sentence_transformers", "记忆（S4 才需要）"),
         ]:

@@ -77,8 +77,10 @@ def log_diagnose(settings: Settings) -> bool:
 def _next_step_hint(name: str) -> str:
     if name.startswith("依赖 sherpa_onnx"):
         return "pip install sherpa-onnx"
-    if name.startswith("依赖 edge_tts") or name.startswith("依赖 pygame"):
-        return "pip install edge-tts pygame"
+    if name.startswith("依赖 edge_tts"):
+        return "pip install edge-tts"
+    if name.startswith("依赖 soundfile"):
+        return "pip install soundfile"
     if name.startswith("依赖 openai"):
         return "pip install openai"
     if name.startswith("依赖 sentence_transformers"):

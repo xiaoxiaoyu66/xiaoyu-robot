@@ -3,8 +3,11 @@
 跑法（在项目根目录下）：
     python scripts\\check_audio.py
 
-90% 的人第一周是死在音频设备上，不是死在 AI 上。
-所以先把这一步跑通，再往下做。
+录不到声音或放不出声音时，先跑这个找设备：
+    python scripts\\diagnose_audio.py
+
+90% 的人第一周是死在音频设备上，不是死在 AI 上，
+所以先把这一步跑通再往下做。
 """
 
 from __future__ import annotations
@@ -12,9 +15,11 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import numpy as np
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from xiaoyu.audio.player import Speaker
+from xiaoyu.audio.player import Speaker, resolve_device
 from xiaoyu.audio.recorder import Recorder, list_devices
 from xiaoyu.config import Settings
 from xiaoyu.logger import get_logger
@@ -30,6 +35,17 @@ def main() -> int:
     logger.info("=" * 58)
     logger.info("S0 · 音频自检")
     logger.info("=" * 58)
+
+    _, in_name = resolve_device(settings.audio.mic_device, output=False)
+    _, out_name = resolve_device(settings.audio.speaker_device, output=True)
+    logger.info("本次使用的输入设备：{}", in_name)
+    logger.info("本次使用的输出设备：{}", out_name)
+    if settings.audio.speaker_device is None:
+        logger.warning(
+            "没有指定输出设备，用的是系统默认。如果默认输出是显示器，"
+            "你会听不到任何声音 —— 跑 python scripts\\diagnose_audio.py 找一个能出声的"
+        )
+
     logger.info("当前系统里的音频设备：")
     for line in list_devices().splitlines():
         logger.info(line)
@@ -41,22 +57,24 @@ def main() -> int:
     logger.info("请对着麦克风随便说一句话，现在开始录 {:.0f} 秒...", RECORD_SECONDS)
     audio = recorder.record_fixed(RECORD_SECONDS)
 
-    peak = float(abs(audio).max()) if audio.size else 0.0
+    peak = float(np.abs(audio).max()) if audio.size else 0.0
     logger.info("录音峰值 = {:.5f}", peak)
 
     if peak < 0.001:
         logger.error("几乎没录到声音。按顺序排查：")
-        logger.error("  1. 是不是麦克风被别的软件占用了（微信 / 腾讯会议 / 游戏语音）")
-        logger.error("  2. 系统设置 -> 隐私和安全性 -> 麦克风，确认允许桌面应用访问")
-        logger.error("  3. 上面的设备清单里如果有多个输入设备，把编号填进 .env 的 XIAOYU_MIC_DEVICE")
-        logger.error("  4. 声音设置里的麦克风音量拉高，并关闭自动增益试试")
+        logger.error("  1. Windows 设置 -> 隐私和安全性 -> 麦克风：允许桌面应用访问")
+        logger.error("  2. 声音设置 -> 输入 -> 选中麦克风 -> 音量拉高、关闭自动增益")
+        logger.error("  3. 麦克风被别的软件占用（微信 / 腾讯会议 / 游戏语音）")
+        logger.error("  4. 把上面设备清单里的输入编号填进 .env 的 XIAOYU_MIC_DEVICE")
+        logger.error("  5. 还是不行就跑 python scripts\\diagnose_audio.py")
         return 1
 
-    logger.info("正在播放刚才的录音...")
+    logger.info("录音正常。正在回放...")
     speaker.play_array(audio)
 
     logger.info("=" * 58)
-    logger.info("如果刚才清楚听到了自己的声音 —— S0 通过，可以进入 S1 了。")
+    logger.info("听到自己的声音 = S0 通过，可以进入 S1 了。")
+    logger.info("没听到 = 输出设备选错了，跑 python scripts\\diagnose_audio.py")
     logger.info("=" * 58)
     return 0
 
