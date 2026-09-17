@@ -34,7 +34,7 @@ XiaoYu Robot/
 │  ├─ state.py             状态机：idle / listening / thinking / speaking
 │  ├─ text.py              纯文本工具（分句），零依赖
 │  ├─ audio/               录音器、扬声器、设备清单
-│  ├─ wake/                唤醒词（sherpa-onnx KWS）
+│  ├─ wake/                唤醒词（KWS；models.py 是纯逻辑，kws.py 跑模型）
 │  ├─ asr/                 语音转文字（SenseVoice）
 │  ├─ tts/                 文字转语音（edge-tts）
 │  ├─ llm/                 大模型对话（DeepSeek 流式）
@@ -42,7 +42,8 @@ XiaoYu Robot/
 │  └─ vision/              视觉（S6 占位）
 ├─ scripts/
 │  ├─ check_audio.py       S0 音频自检
-│  └─ download_models.py   下载模型
+│  ├─ download_models.py   下载模型
+│  └─ make_keywords.py     中文唤醒词 -> 音素格式
 ├─ config/
 │  ├─ keywords.txt         唤醒词（改这里就能换名字）
 │  ├─ persona.md           小宇的性格（改这里就能换人格）
@@ -134,19 +135,40 @@ XIAOYU_LOG_LEVEL=DEBUG      # 排查问题时打开，平时用 INFO
 
 | 想改什么 | 改哪个文件 |
 |---|---|
-| 唤醒词（比如改成"二娃"） | `config/keywords.txt` |
+| 唤醒词（用 `scripts\make_keywords.py` 生成） | `config/keywords.txt` |
 | 小宇的性格 | `config/persona.md` |
 | API Key / 日志级别 / 麦克风编号 | `.env` |
 | 采样率、静音阈值、音色、模型名 | `xiaoyu/config.py` |
 
-`config/keywords.txt` 的格式：
+### 换唤醒词（别手写，用脚本）
+
+唤醒模型的词表是**音素**级的，中文要用「声母 + 带声调韵母」写，直接写汉字会让程序崩溃：
 
 ```
-关键词 :阈值 #增强 @显示名
-小宇 :2.5 #0.5 @小宇
+错：  小宇 :2.5 #0.5 @小宇
+对：  x iǎo y ǔ :2.5 #0.5 @小宇
+```
+
+所以换唤醒词请用脚本生成：
+
+```powershell
+python scripts\make_keywords.py 小宇              # 先看转换结果对不对
+python scripts\make_keywords.py 二娃 --write      # 确认没问题再写进 config/keywords.txt
+python scripts\make_keywords.py 小宇 --write --threshold 3.0    # 顺带调阈值
+```
+
+`config/keywords.txt` 的格式（脚本会自动生成）：
+
+```
+音素序列 :阈值 #增强 @显示名
+x iǎo y ǔ :2.5 #0.5 @小宇
 ```
 
 阈值越大越难唤醒（越不容易误触发），一般 2.0 ~ 4.0 之间调。
+如果加载时报"音素不在模型词表里"，说明词转错了，换一个唤醒词试试。
+
+> 程序启动时会先校验唤醒词文件，音素不对会给出明确报错，
+> 而不是让 sherpa-onnx 在 C++ 层静默崩溃。
 
 ---
 
