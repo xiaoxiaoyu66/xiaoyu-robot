@@ -646,11 +646,15 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
    `Synthesizer.interrupt()`（停声音 + 丢队列 + close 大模型流，半截不进历史）→
    主控等 0.2 秒余音散掉 → 开麦续听（半双工不破）。
    **键盘模式 `--text` 也接了脸**，调试脸不用开麦克风。
-5. **最简脸**（`face/index.html`，单文件零构建）：Canvas 圆脸 + 随机眨眼 +
-   嘴跟 mouth.level 动 + 状态光环（idle 黄 / listening 绿 / thinking 橙 / speaking 蓝）
-   + 字幕 + 点脸发 interrupt + 断线 3 秒自动重连。
+5. **最简脸**（`face/index.html`，单文件零构建）：**Vector 风 LCD 豆眼**
+   （用户从 A 豆眼 / B 圆眼 / C 圆点 三版表情稿中选定 A 版，2026-09-18 晚重画）。
+   深色脸屏 + bean 眼：待机时眼睛四处看 + 呼吸，listening 睁眼，thinking 上瞟，
+   speaking 睁眼跳 + 嘴跟 mouth.level；随机眨眼；点脸发 interrupt；
+   断线 3 秒自动重连；带 Wake Lock（平板不熄屏）。
    **这是"先完成"版**；Live2D 换皮（Vue3 + pixi-live2d-display，pin pixi.js@6）
-   以后做，协议不变只换消费端。
+   以后做，**以 A 版豆眼为设计基准**，协议不变只换消费端。
+   情绪系统（用户 2026-09-18 提出：生气变眼神、开心眼角弯）设计骨架见 TODO，
+   落地时给协议加 `emotion` 事件，脸这里加 mood 维度。
 
 **验收动作（还没做，用户下次开工第一件事）**：
 `python -m xiaoyu --text` → 浏览器打开 `face/index.html?token=xiaoyu` →

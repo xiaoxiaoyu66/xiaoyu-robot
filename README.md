@@ -67,7 +67,7 @@ XiaoYu Robot/
 ├─ models/                 模型文件（不进 git）
 ├─ data/                   SQLite、TTS 缓存（不进 git）
 ├─ logs/                   日志文件（不进 git）
-├─ face/                   表情脸网页：浏览器打开 index.html?token=xiaoyu
+├─ face/                   表情脸网页（Vector 风豆眼）：index.html?token=xiaoyu
 └─ docs/                   设计文档
 ```
 

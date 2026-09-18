@@ -7,7 +7,7 @@
 <style>
   html, body {
     margin: 0; height: 100%;
-    background: #fdf6ec;
+    background: #f7f3ec;
     font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
@@ -15,10 +15,10 @@
   #wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
   canvas { touch-action: none; cursor: pointer; }
   #caption {
-    min-height: 1.6em; font-size: 20px; color: #5b4a3a;
+    min-height: 1.6em; font-size: 20px; color: #4a443c;
     max-width: 80vw; text-align: center; line-height: 1.5;
   }
-  #status { font-size: 13px; color: #a08c78; display: flex; align-items: center; gap: 6px; }
+  #status { font-size: 13px; color: #94897c; display: flex; align-items: center; gap: 6px; }
   #dot { width: 10px; height: 10px; border-radius: 50%; background: #d9534f; transition: background .3s; }
   #dot.on { background: #5cb85c; }
 </style>
@@ -30,7 +30,7 @@
   <div id="status"><span id="dot"></span><span id="statusText">连接中……</span></div>
 </div>
 <script>
-// ---------- 连接参数：用 ?token=xxx 覆盖，默认 xiaoyu ----------
+// ---------- 连接参数：?token=xxx 覆盖，默认 xiaoyu ----------
 const qs = new URLSearchParams(location.search);
 const TOKEN = qs.get("token") || "xiaoyu";
 const HOST = qs.get("host") || location.hostname || "localhost";
@@ -43,20 +43,19 @@ const dotEl = document.getElementById("dot");
 const statusEl = document.getElementById("statusText");
 
 // ---------- 状态 ----------
+// 表情基准：用户从 A/B/C 三版稿里选的 A 版（Vector 风 LCD 豆眼）。
+// 情绪系统落地时会在这里加 mood 维度（眉眼/光环色），协议已预留 emotion 事件。
 let state = "idle";        // idle / listening / thinking / speaking / error
 let mouthTarget = 0;       // 主控推来的口型目标值 0~1
 let mouthShown = 0;        // 平滑后的显示值
-let blink = 0;             // >0 表示正在闭眼（帧数）
-let nextBlink = 120;       // 距下次眨眼的帧数
-let t = 0;                 // 帧计数（呼吸动画用）
+let blinkLeft = 0;         // >0 正在闭眼（帧数）
+let nextBlink = 140;
+let lookX = 0, lookY = 0;      // 眼睛当前偏移（待机时四处看）
+let lookTargetX = 0, lookTargetY = 0;
+let nextLook = 200;
 
-const RING = {
-  idle:      "#e8c9a0",
-  listening: "#7bc96f",
-  thinking:  "#f0a35e",
-  speaking:  "#6ea8fe",
-  error:     "#e06c6c",
-};
+const PANEL = "#262624";
+const EYE = "#F1EFE8";
 const LABEL = {
   idle: "待机", listening: "听你说话", thinking: "在想",
   speaking: "在说", error: "出错了",
@@ -77,10 +76,10 @@ function connect() {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
     if (msg.type === "state") {
-      state = msg.state in RING ? msg.state : "idle";
+      state = LABEL[msg.state] ? msg.state : "idle";
       if (state !== "speaking") mouthTarget = 0;
       if (state === "idle") captionEl.textContent = "";
-      statusEl.textContent = `已连接 · ${LABEL[state] || state}`;
+      statusEl.textContent = `已连接 · ${LABEL[state]}`;
     } else if (msg.type === "mouth") {
       mouthTarget = Math.max(0, Math.min(1, msg.level || 0));
     } else if (msg.type === "caption") {
@@ -105,87 +104,94 @@ canvas.addEventListener("pointerdown", () => {
   }
 });
 
+// 平板常亮（笔记本上无效也无妨）
+if ("wakeLock" in navigator) {
+  const keepAwake = async () => {
+    try { await navigator.wakeLock.request("screen"); } catch {}
+  };
+  keepAwake();
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") keepAwake();
+  });
+}
+
+// ---------- 工具 ----------
+function bean(x, y, w, h) {
+  // 圆角 bean：Vector 的眼睛
+  const r = w / 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y - h / 2 + r);
+  ctx.arcTo(x, y - h / 2, x + w, y - h / 2, r);
+  ctx.arcTo(x + w, y - h / 2, x + w, y + h / 2, r);
+  ctx.arcTo(x + w, y + h / 2, x, y + h / 2, r);
+  ctx.arcTo(x, y + h / 2, x, y - h / 2, r);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function rr(x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
 // ---------- 画脸 ----------
 function draw() {
-  t++;
   const W = canvas.width, H = canvas.height;
   const cx = W / 2, cy = H / 2 - 10;
   ctx.clearRect(0, 0, W, H);
 
-  // 呼吸：待机时轻轻起伏
-  const breathe = state === "idle" ? 1 + Math.sin(t / 40) * 0.012 : 1;
-  const R = 130 * breathe;
+  // 呼吸：待机时整张脸轻轻起伏
+  const breathe = state === "idle" ? 1 + Math.sin(Date.now() / 900) * 0.006 : 1;
 
-  // 状态色光环
-  ctx.beginPath();
-  ctx.arc(cx, cy, R + 22, 0, Math.PI * 2);
-  ctx.lineWidth = 10;
-  ctx.strokeStyle = RING[state] || RING.idle;
-  ctx.globalAlpha = 0.55;
-  ctx.stroke();
-  ctx.globalAlpha = 1;
-
-  // 脸
-  const grad = ctx.createRadialGradient(cx - 30, cy - 40, 20, cx, cy, R);
-  grad.addColorStop(0, "#fff3dd");
-  grad.addColorStop(1, "#ffe1b0");
-  ctx.beginPath();
-  ctx.arc(cx, cy, R, 0, Math.PI * 2);
-  ctx.fillStyle = grad;
+  // 屏幕面板（深色圆角矩形，像 Vector 的脸屏）
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.scale(breathe, breathe);
+  ctx.translate(-cx, -cy);
+  rr(56, 36, W - 112, H - 72, 42);
+  ctx.fillStyle = PANEL;
   ctx.fill();
 
-  // 眼睛
-  if (--nextBlink <= 0) { blink = 8; nextBlink = 140 + Math.random() * 160; }
-  const eyeOpen = blink > 0 ? 0.08 : (state === "listening" ? 1.15 : 1);
-  if (blink > 0) blink--;
-  const eyeY = cy - 30;
-  const lookUp = state === "thinking" ? -8 : 0;
-  for (const dx of [-48, 48]) {
-    ctx.save();
-    ctx.translate(cx + dx, eyeY);
-    ctx.scale(1, eyeOpen);
-    ctx.beginPath();
-    ctx.arc(0, 0, 15, 0, Math.PI * 2);
-    ctx.fillStyle = "#4a3728";
-    ctx.fill();
-    ctx.beginPath();
-    ctx.arc(4, lookUp - 2, 5, 0, Math.PI * 2);
-    ctx.fillStyle = "#ffffff";
-    ctx.globalAlpha = 0.85;
-    ctx.fill();
-    ctx.globalAlpha = 1;
-    ctx.restore();
-  }
+  // 眼睛参数
+  let eyeW = 56, eyeH = 84;
+  if (state === "listening") eyeH = 96;          // 听你说话：睁大一点
+  if (state === "thinking") { eyeH = 70; lookTargetY = -16; }  // 在想：眼睛往上瞟
+  if (state === "speaking") eyeH = 84 + mouthShown * 6;        // 说话：随语气轻轻跳
 
-  // 嘴：speaking 时跟音量动，其他状态是一条微笑弧线
-  mouthShown += (mouthTarget - mouthShown) * 0.35;
-  const mouthY = cy + 42;
+  // 待机时眼睛四处看（Vector 的招牌动作）
+  if (state === "idle" && --nextLook <= 0) {
+    const dirs = [[-16, 0], [16, 0], [0, -10], [0, 6], [0, 0]];
+    const d = dirs[Math.floor(Math.random() * dirs.length)];
+    lookTargetX = d[0]; lookTargetY = d[1];
+    nextLook = 160 + Math.random() * 200;
+  }
+  lookX += (lookTargetX - lookX) * 0.08;
+  lookY += (lookTargetY - lookY) * 0.08;
+
+  // 眨眼
+  if (--nextBlink <= 0) { blinkLeft = 7; nextBlink = 150 + Math.random() * 180; }
+  if (blinkLeft > 0) { blinkLeft--; eyeH *= 0.08; }
+
+  // 画眼
+  ctx.fillStyle = EYE;
+  const ex = cx - eyeW / 2, ey = cy - eyeH / 2;
+  bean(ex - 58 + lookX, ey + lookY, eyeW, eyeH);
+  bean(ex + 58 + lookX, ey + lookY, eyeW, eyeH);
+
+  // 嘴：只在说话时出现，跟音量动
+  mouthShown += (mouthTarget - mouthShown) * 0.4;
   if (mouthShown > 0.03) {
-    const h = 4 + mouthShown * 42;
-    const w = 62 - mouthShown * 14;
     ctx.beginPath();
-    ctx.ellipse(cx, mouthY, w, h, 0, 0, Math.PI * 2);
-    ctx.fillStyle = "#8a5a3a";
-    ctx.fill();
-  } else {
-    ctx.beginPath();
-    ctx.arc(cx, mouthY - 8, 30, Math.PI * 0.18, Math.PI * 0.82);
-    ctx.lineWidth = 6;
-    ctx.lineCap = "round";
-    ctx.strokeStyle = "#8a5a3a";
-    ctx.stroke();
-  }
-
-  // 腮红
-  ctx.globalAlpha = 0.35;
-  ctx.fillStyle = "#ffb0a0";
-  for (const dx of [-82, 82]) {
-    ctx.beginPath();
-    ctx.ellipse(cx + dx, cy + 12, 18, 11, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + lookX * 0.4, cy + 108, 24, 3 + mouthShown * 24, 0, 0, Math.PI * 2);
     ctx.fill();
   }
-  ctx.globalAlpha = 1;
 
+  ctx.restore();
   requestAnimationFrame(draw);
 }
 requestAnimationFrame(draw);
