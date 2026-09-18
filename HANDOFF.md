@@ -383,6 +383,15 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
     整个标记跟着漏进正文/字幕/历史 —— **逐字喂必现，真 DeepSeek 冒烟也复现过**。
     → 尾巴判定要连"开标记的前缀残片"一起按住（`emotion.py::_holdback_index`），
     回归用例 `tests/test_emotion.py::StreamingHoldbackTest`。
+28. **正常退出被记成"意外退出"**（2026-09-18）。`FaceServer.stop()` 用的是
+    `loop.stop()`，asyncio 会把它报成 `RuntimeError: Event loop stopped before
+    Future completed`，而 `_run()` 的 `except Exception` 一律 `logger.exception`
+    —— 于是**每次正常收摊都往 error.log 写一段假堆栈**。常驻模式（守护反复重启）
+    下这会迅速把 error.log 灌满噪声。
+    → 加 `_stopping` 标志区分"主动停"和"真崩"（`face/server.py`）。
+    顺带记一条**已知无害噪声**：这么停在 stderr 上还会打
+    `Task was destroyed but it is pending!` 之类，**不进 error.log**，
+    只影响退出时控制台/guardian.log 的观感，暂不处理。
 
 ---
 

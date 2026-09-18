@@ -33,6 +33,10 @@ class FaceServer:
         self._thread: threading.Thread | None = None
         self._ready = threading.Event()
         self._interrupt = threading.Event()
+        # 正常收摊的标志。stop() 里的 loop.stop() 会让 asyncio 抛
+        # "Event loop stopped before Future completed" —— 那是正常路径不是崩溃。
+        # 不区分的话每次退出都往 error.log 塞一段假堆栈，真故障会被淹掉。
+        self._stopping = threading.Event()
         # 收到打断时立刻执行的动作（通常是 synthesizer.interrupt）。
         # 不能等主循环下一轮轮询 —— 一句长话要是等它播完再停就太蠢了。
         self.on_interrupt: Callable[[], None] | None = None
@@ -70,9 +74,14 @@ class FaceServer:
         try:
             self._loop.run_until_complete(serve())
         except Exception:
-            logger.exception("表情脸服务意外退出")
+            if self._stopping.is_set():
+                # 正常收摊：loop.stop() 的副作用就是这句 RuntimeError
+                logger.debug("表情脸服务已停止")
+            else:
+                logger.exception("表情脸服务意外退出")
 
     def stop(self) -> None:
+        self._stopping.set()
         if self._loop is not None:
             self._loop.call_soon_threadsafe(self._loop.stop)
 
