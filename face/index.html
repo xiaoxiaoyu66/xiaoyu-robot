@@ -131,16 +131,21 @@ if ("wakeLock" in navigator) {
 }
 
 // ---------- 工具 ----------
-function bean(x, y, w, h) {
-  // 圆角 bean：Vector 的眼睛
+// 圆角 bean（Vector 的眼睛）。参数 y 是眼睛的**中心**，不是上边缘。
+// 拆成「只画路径」和「填色」两步，是为了两只眼睛攒成一条路径一次填完 ——
+// 加外发光时 shadowBlur 只算一遍（这个操作很贵）。
+function beanPath(x, y, w, h) {
   const r = w / 2;
-  ctx.beginPath();
   ctx.moveTo(x, y - h / 2 + r);
   ctx.arcTo(x, y - h / 2, x + w, y - h / 2, r);
   ctx.arcTo(x + w, y - h / 2, x + w, y + h / 2, r);
   ctx.arcTo(x + w, y + h / 2, x, y + h / 2, r);
   ctx.arcTo(x, y + h / 2, x, y - h / 2, r);
   ctx.closePath();
+}
+function bean(x, y, w, h) {
+  ctx.beginPath();
+  beanPath(x, y, w, h);
   ctx.fill();
 }
 
@@ -153,6 +158,31 @@ function rr(x, y, w, h, r) {
   ctx.arcTo(x, y, x + w, y, r);
   ctx.closePath();
 }
+
+// 情绪的固定嘴形：smile 上弯 / frown 下弯 / o 小圆口。
+// 曲线中心比嘴角低就是 "U"（笑），反过来就是撇嘴。
+function drawMouth(kind, x, y, k) {
+  const t = 0.55 + 0.45 * k;          // 强度：越强嘴越大
+  ctx.save();
+  ctx.strokeStyle = EYE;
+  ctx.fillStyle = EYE;
+  ctx.lineCap = "round";
+  if (kind === "o") {
+    ctx.beginPath();
+    ctx.ellipse(x, y - 2, 9 * t, 12 * t, 0, 0, Math.PI * 2);
+    ctx.fill();
+  } else {
+    const w = 26 * t;
+    const d = 12 * t * (kind === "smile" ? 1 : -1);
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(x - w, y - d * 0.5);
+    ctx.quadraticCurveTo(x, y + d, x + w, y - d * 0.5);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+const MOUTH = { happy: "smile", angry: "frown", sad: "frown", surprised: "o" };
 
 // ---------- 画脸 ----------
 function draw() {
@@ -217,9 +247,11 @@ function draw() {
     lookTargetX = d[0]; lookTargetY = d[1];
     nextLook = 160 + Math.random() * 200;
   }
-  if (m === "sad") lookTargetY += 5;   // 难过：视线略垂
+  // 难过：视线略垂。必须是固定偏移；写成 lookTargetY += 5 会每帧累加，
+  // 几秒内把眼睛顶出脸外（实测 3 秒跑到 cy+858）。
+  const dropY = m === "sad" ? 6 : 0;
   lookX += (lookTargetX - lookX) * 0.08;
-  lookY += (lookTargetY - lookY) * 0.08;
+  lookY += (lookTargetY + dropY - lookY) * 0.08;
 
   // 眨眼
   if (--nextBlink <= 0) { blinkLeft = 7; nextBlink = 150 + Math.random() * 180; }
@@ -245,11 +277,18 @@ function draw() {
     ctx.stroke();
   }
 
-  // 画眼
+  // 画眼：两只眼睛合成一条路径 + 一层柔光，做出 LCD 背光的感觉。
+  // （beanPath 的参数是眼睛的**中心** y，不是上边缘。）
+  const ex = cx - eyeW / 2, ey = cy;
+  ctx.save();
+  ctx.shadowColor = "rgba(241,239,232,0.38)";   // 别太散，散过头豆眼会显糊
+  ctx.shadowBlur = 14;
   ctx.fillStyle = EYE;
-  const ex = cx - eyeW / 2, ey = cy - eyeH / 2;
-  bean(ex - 58 + lookX, ey + lookY, eyeW, eyeH);
-  bean(ex + 58 + lookX, ey + lookY, eyeW, eyeH);
+  ctx.beginPath();
+  beanPath(ex - 58 + lookX, ey + lookY, eyeW, eyeH);
+  beanPath(ex + 58 + lookX, ey + lookY, eyeW, eyeH);
+  ctx.fill();
+  ctx.restore();
 
   // 开心：用面板色盖住 bean 的下缘，豆眼变弯月眼（Vector 笑眼）
   if (m === "happy") {
@@ -273,12 +312,19 @@ function draw() {
     ctx.fill();
   }
 
-  // 嘴：只在说话时出现，跟音量动
+  // 嘴：说话时跟音量开合；情绪时给一张固定的嘴
+  // （以前怒/悲/惊只有眉毛在撑，嘴巴空着，情绪只表达了一半）
   mouthShown += (mouthTarget - mouthShown) * 0.4;
+  const mouthY = cy + 100;
   if (mouthShown > 0.03) {
+    ctx.save();
+    ctx.fillStyle = EYE;   // 必须显式指定：不写会继承上面腮红/挖月牙的颜色，说话时嘴就隐形了
     ctx.beginPath();
-    ctx.ellipse(cx + lookX * 0.4, cy + 108, 24, 3 + mouthShown * 24, 0, 0, Math.PI * 2);
+    ctx.ellipse(cx + lookX * 0.4, mouthY, 24, 3 + mouthShown * 24, 0, 0, Math.PI * 2);
     ctx.fill();
+    ctx.restore();
+  } else if (MOUTH[m]) {
+    drawMouth(MOUTH[m], cx + lookX * 0.4, mouthY, k);
   }
 
   ctx.restore();
