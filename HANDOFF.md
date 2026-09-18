@@ -33,6 +33,10 @@
 抽出「主人叫小林 / 小林是大四学生 / 小林正在准备考研 / 小林不喜欢喝咖啡」4 条事实；
 **再跑一遍全判成重复、一条不新增**。脚本 `.scratch/smoke_4b.py`（临时库 + 真 DeepSeek）。
 
+**S5 表情脸 + 触屏打断、S6a 眼睛跟随也都写完**（2026-09-18 晚，详见 §6.3 之后）：
+S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒烟通过待真人验收
+——摄像头读人头位置，待机/听话时它的眼睛盯着你看。全量 213 个测试全绿。
+
 **2026-09-18 还动了两个"外围"但影响体感的东西**：
 
 - 唤醒词从 `小宇` 换成 **「小柚子」**（音素 `x iǎo y òu z i`）。
@@ -318,6 +322,20 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
     → 装包用 `pip install --proxy http://127.0.0.1:<端口> 包名`，端口看 git
     curl trace 里的 `Trying 127.0.0.1:xxxxx`（本次实测 45895，可能会变）。
     用户自己的终端窗口里没有这个坑。
+23. **pip 解析依赖回溯到 matplotlib 时会去下 35MB 的 sdist 源码包**（Windows 上
+    编译必炸，装 mediapipe 时踩过）。→ 加 `--only-binary=:all:` 强制只用 wheel，
+    解析器立刻老实。另外 mediapipe 自带 opencv-contrib-python，**别再装
+    opencv-python**，两个 cv2 会互相覆盖。
+24. **mediapipe 1.0 删了 `mp.solutions`**（2026-09-18 装到 1.0.1 实测）。只剩
+    Tasks API：`BaseOptions` 在 `mediapipe.tasks.python.core.base_options`，
+    运行模式枚举叫 `RunningMode`（不是 `VisionRunningMode`，vision 包 `__init__`
+    里有导出名单），人脸检测器 `FaceDetector.create_from_options(...)`，
+    BlazeFace 六个关键点 index 2 = 鼻尖。模型文件 *.tflite 不随包分发，要从
+    `storage.googleapis.com/mediapipe-models/` 单独下（走本地代理）。
+25. **这个 AI 环境里 Edit 工具出现过"报告成功但没写上"的假成功**（2026-09-18
+    S6a 踩了三次：config.py 的 Paths、tracker.py 的 start()、导入块都是第二批
+    编辑丢的，靠运行报错才暴露）。→ **一批编辑落地后，用 Grep/Read 抽查每个
+    改动点再跑**；报错如果是"本该改掉的旧代码"，先怀疑这个，别怀疑逻辑。
 
 ---
 
@@ -636,7 +654,7 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
 
 ---
 
-### 🟡 S5 · 表情脸 + 触屏打断（2026-09-18 起步，待真人验证）
+### ✅ S5 · 表情脸 + 触屏打断（2026-09-18 真人验收通过）
 
 1. **协议**（`xiaoyu/face/protocol.py`，纯逻辑）：state / mouth / caption 三类事件
    + interrupt 一条命令；token 校验（`?token=xxx`，错 token 关闭码 4401）。

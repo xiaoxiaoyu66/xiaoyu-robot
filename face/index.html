@@ -53,6 +53,9 @@ let nextBlink = 140;
 let lookX = 0, lookY = 0;      // 眼睛当前偏移（待机时四处看）
 let lookTargetX = 0, lookTargetY = 0;
 let nextLook = 200;
+// 眼睛跟随（S6a）：最近一次 gaze 事件。500ms 没新 gaze 就回待机游荡。
+const GAZE_TTL = 500;
+let gazeX = 0, gazeY = 0, gazeAt = 0;
 
 const PANEL = "#262624";
 const EYE = "#F1EFE8";
@@ -163,8 +166,15 @@ function draw() {
   if (state === "thinking") { eyeH = 70; lookTargetY = -16; }  // 在想：眼睛往上瞟
   if (state === "speaking") eyeH = 84 + mouthShown * 6;        // 说话：随语气轻轻跳
 
-  // 待机时眼睛四处看（Vector 的招牌动作）
-  if (state === "idle" && --nextLook <= 0) {
+  // 眼睛目标优先级（S6a）：gaze 跟随 > 待机游荡。
+  // 待机/听话时 500ms 内有 gaze 就盯着人看；超时或人不见了回游荡。
+  const gazeFresh = (state === "idle" || state === "listening") &&
+                    Date.now() - gazeAt < GAZE_TTL;
+  if (gazeFresh) {
+    lookTargetX = gazeX * 26;    // 人在画面左 -> 眼往左瞟
+    lookTargetY = -gazeY * 16;   // 画面上方是正 y，屏幕偏移向上是负
+  } else if (state === "idle" && --nextLook <= 0) {
+    // 待机时眼睛四处看（Vector 的招牌动作）
     const dirs = [[-16, 0], [16, 0], [0, -10], [0, 6], [0, 0]];
     const d = dirs[Math.floor(Math.random() * dirs.length)];
     lookTargetX = d[0]; lookTargetY = d[1];

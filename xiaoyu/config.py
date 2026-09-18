@@ -147,6 +147,8 @@ class Paths:
     asr: Path = PROJECT_ROOT / "models" / "sense-voice"
     vad_model: Path = PROJECT_ROOT / "models" / "silero_vad.onnx"
     tts: Path = PROJECT_ROOT / "models" / "tts"
+    vision: Path = PROJECT_ROOT / "models" / "vision"
+    face_detector: Path = PROJECT_ROOT / "models" / "vision" / "blaze_face_short_range.tflite"
     data: Path = PROJECT_ROOT / "data"
     logs: Path = PROJECT_ROOT / "logs"
     config: Path = PROJECT_ROOT / "config"
@@ -246,6 +248,18 @@ class FaceConfig:
     console: bool = True
 
 
+@dataclass(frozen=True)
+class VisionConfig:
+    """眼睛跟随（S6a）。视觉是可选件：依赖没装/摄像头打不开就静默禁用。"""
+
+    enabled: bool = True
+    camera_index: int = 0
+    publish_hz: int = 10          # gaze 广播节流
+    smooth_alpha: float = 0.3     # EMA 平滑系数，越大越跟手
+    min_confidence: float = 0.5   # BlazeFace 置信度门槛
+    model_file: str = "blaze_face_short_range.tflite"  # 在 models/vision/ 下
+
+
 @dataclass
 class Settings:
     paths: Paths = field(default_factory=Paths)
@@ -256,6 +270,7 @@ class Settings:
     llm: LlmConfig = field(default_factory=LlmConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
+    vision: VisionConfig = field(default_factory=VisionConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -296,6 +311,13 @@ class Settings:
                 token=_env_str("XIAOYU_FACE_TOKEN") or "xiaoyu",
                 console=_env_bool("XIAOYU_FACE_CONSOLE", True),
             ),
+            vision=VisionConfig(
+                enabled=_env_bool("XIAOYU_VISION_ENABLED", True),
+                camera_index=_env_int("XIAOYU_VISION_CAMERA") or 0,
+                publish_hz=_env_int("XIAOYU_VISION_HZ") or 10,
+                smooth_alpha=_env_float("XIAOYU_VISION_ALPHA", 0.3),
+                min_confidence=_env_float("XIAOYU_VISION_CONFIDENCE", 0.5),
+            ),
         )
         settings.paths.ensure_dirs()
         logger.info(
@@ -332,6 +354,8 @@ class Settings:
             ("openai", "大模型对话"),
             ("sentence_transformers", "记忆（S4 才需要）"),
             ("websockets", "表情脸（S5）"),
+            ("mediapipe", "眼睛跟随（S6a）"),
+            ("cv2", "眼睛跟随（S6a）"),
         ]:
             found = importlib.util.find_spec(pkg) is not None
             items.append(CheckItem(f"依赖 {pkg}", found, purpose))
@@ -344,6 +368,13 @@ class Settings:
                 "VAD 模型",
                 self.paths.vad_model.exists(),
                 str(self.paths.vad_model.relative_to(self.paths.root)),
+            )
+        )
+        items.append(
+            CheckItem(
+                "眼睛跟随模型",
+                self.paths.face_detector.exists(),
+                str(self.paths.face_detector.relative_to(self.paths.root)),
             )
         )
         items.append(

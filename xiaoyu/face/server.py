@@ -128,6 +128,10 @@ class FaceServer:
         if text:
             self._publish(protocol.caption_message(text))
 
+    def publish_gaze(self, x: float, y: float) -> None:
+        """眼睛跟随（S6a）。发布节奏由 vision 那边节流（默认 10Hz）。"""
+        self._publish(protocol.gaze_message(x, y))
+
     def _publish(self, payload: dict) -> None:
         """跨线程广播。没有脸连着时直接丢 —— 脸是锦上添花，
         绝不能反过来拖住主控。"""

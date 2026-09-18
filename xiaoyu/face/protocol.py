@@ -5,6 +5,7 @@
     {"type": "state",   "state": "idle"}        # idle / listening / thinking / speaking / error
     {"type": "mouth",   "level": 0.37}          # 播放音量包络，约 50ms 一帧，口型跟随
     {"type": "caption", "text": "今天也要加油"}  # 正在说的这句话（字幕）
+    {"type": "gaze",    "x": -0.4, "y": 0.2}    # 眼睛跟随（S6a）：人往哪，眼往哪，x/y ∈ [-1,1]
 
 命令（脸 -> 主控）：
 
@@ -40,6 +41,12 @@ def mouth_message(level: float) -> dict:
 
 def caption_message(text: str) -> dict:
     return {"type": "caption", "text": text.strip()}
+
+
+def gaze_message(x: float, y: float) -> dict:
+    """眼睛跟随（S6a）。x/y 各自夹到 [-1,1] 并取整 —— 与 mouth 同款洁癖。"""
+    clamp = lambda v: round(max(-1.0, min(1.0, float(v))), 3)
+    return {"type": "gaze", "x": clamp(x), "y": clamp(y)}
 
 
 def encode(payload: dict) -> str:

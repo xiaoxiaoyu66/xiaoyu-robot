@@ -148,6 +148,38 @@ def attach_console_face(settings: Settings, state: StateMachine, synthesizer):
     return console_face
 
 
+def attach_vision(settings: Settings, state: StateMachine, face) -> None:
+    """眼睛跟随（S6a）：摄像头读人头位置 -> 脸的眼睛盯着人看。
+
+    只在待机 / 听话时跑（说话时眼睛忙，不抢 CPU）；
+    依赖没装、摄像头打不开、脸没启用 —— 一律静默不启用。
+    """
+    if not settings.vision.enabled or face is None:
+        return None
+    try:
+        from .vision.tracker import GazeTracker
+    except Exception:
+        logger.exception("眼睛跟随模块加载失败，本次不启用")
+        return None
+
+    tracker = GazeTracker(settings.vision)
+    tracker.on_gaze = face.publish_gaze
+    try:
+        if not tracker.start():
+            return None
+    except Exception:
+        logger.exception("眼睛跟随启动失败，本次不启用")
+        return None
+
+    # 只在 IDLE / LISTENING 时看；状态机里先置一次当前状态
+    state.on_change(
+        lambda old, new: tracker.set_active(new in (State.IDLE, State.LISTENING))
+    )
+    tracker.set_active(True)  # 主循环起手就是 IDLE
+    logger.info("眼睛跟随已接上：待机/听话时盯着人看，说话时休息")
+    return tracker
+
+
 def _caption_emitter(*handlers):
     """把多个字幕接收方（浏览器脸 + 控制台脸）合成一个回调。"""
     handlers = [h for h in handlers if h is not None]
@@ -180,6 +212,7 @@ def run_text_mode(settings: Settings) -> None:
     state = StateMachine()
     face = attach_face(settings, state, synthesizer)
     console_face = attach_console_face(settings, state, synthesizer)
+    attach_vision(settings, state, face)
     on_caption = _caption_emitter(
         face.publish_caption if face else None,
         console_face.on_caption if console_face else None,
@@ -253,6 +286,7 @@ def run_voice_loop(settings: Settings) -> None:
     detector = WakeWordDetector(settings)
     face = attach_face(settings, state, synthesizer)
     console_face = attach_console_face(settings, state, synthesizer)
+    attach_vision(settings, state, face)
     on_caption = _caption_emitter(
         face.publish_caption if face else None,
         console_face.on_caption if console_face else None,

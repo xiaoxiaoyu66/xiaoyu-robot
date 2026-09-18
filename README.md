@@ -54,7 +54,7 @@ XiaoYu Robot/
 │  ├─ llm/                 大模型对话（DeepSeek 流式）
 │  ├─ memory/              记忆（SQLite，向量检索预留）
 │  ├─ face/                表情脸（S5 的协议和服务；网页在仓库根的 face/）
-│  └─ vision/              视觉（S6 占位）
+│  └─ vision/              眼睛跟随（S6a：gaze 纯函数 + 摄像头守护线程）
 ├─ scripts/
 │  ├─ check_audio.py       S0 音频自检
 │  ├─ download_models.py   下载模型

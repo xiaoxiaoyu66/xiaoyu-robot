@@ -27,9 +27,12 @@ websockets>=12
 # ---------- 记忆（S4 再装，会连带下载约 2GB PyTorch）----------
 # sentence-transformers>=3.0
 
-# ---------- 视觉（S6 可选）----------
-# rapidocr-onnxruntime>=1.4
+# ---------- 眼睛跟随（S6a，可选：装不上就静默禁用）----------
+# mediapipe>=0.10
 # opencv-python>=4.10
+
+# ---------- 视觉完整版（S6 可选）----------
+# rapidocr-onnxruntime>=1.4
 # insightface>=0.7.3
 # onnxruntime>=1.18
 
