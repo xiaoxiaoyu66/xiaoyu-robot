@@ -150,6 +150,17 @@
       整个标记跟着漏进正文/字幕/历史。逐字喂必现，真 DeepSeek 冒烟也复现过。
       → 修法是 `_holdback_index()` 连"开标记的前缀残片"一起按住。
       没做（属于"以后"）：持久心情、控制台脸渲染情绪、情绪影响 TTS 语速音调。
+       **用户实测又抓出一个（2026-09-18 深夜，已修 + 有回归测试）**：情绪回调被塞进了
+       给**字幕**用的转发器，而那个转发器是按字幕签名写死的 `emit(text)` ——
+       情绪是两个参数，真跑必炸
+       `TypeError: emit() takes 1 positional argument but 2 were given`。
+       最阴的是它被 `stream_reply` 兜住了（情绪是表演、不能带崩对话），
+       只在 `logs\error.log` 留一行：**聊天一切正常，就是脸永远不变表情**。
+       为什么之前冒烟没抓到：`.scratch/smoke_emotion.py` 自己写了个 `lambda m, i: ...`，
+       签名是对的 —— **自接一遍的冒烟，测不出"线上接错了"**。
+       → `_fanout(label, *handlers)` 参数开放 + `app.build_callbacks()` 让两个模式共用一份接法；
+       回归测试 `tests/test_emotion_wiring.py` 从 `build_callbacks` 出发、走真的 `stream_reply`
+       （验证过它抓得住：把 `emit(*args)` 改回 `emit(text)`，4 个用例立刻红）。
 - [x] **S5.5 · 常驻自愈** —— 2026-09-18 完成，**待真人验收**（拔插 USB / 断网一分钟）。
       四件事：
       1. **主循环自愈**：`run_voice_loop()` 拆出 `_one_conversation()`，

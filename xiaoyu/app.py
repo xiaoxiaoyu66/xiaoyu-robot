@@ -180,20 +180,47 @@ def attach_vision(settings: Settings, state: StateMachine, face) -> None:
     return tracker
 
 
-def _caption_emitter(*handlers):
-    """把多个字幕接收方（浏览器脸 + 控制台脸）合成一个回调。"""
+def _fanout(label: str, *handlers):
+    """把多个接收方合成一个回调：谁挂了都不影响别人，也不影响主流程。
+
+    label 只进日志。**参数个数是开放的**，这里有两个原因：
+
+    字幕是 1 个参数（text），情绪是 2 个（mood, intensity）。
+    这个函数以前叫 `_caption_emitter`、按字幕的签名写死了 `emit(text)`，
+    情绪接进来的时候直接
+        TypeError: emit() takes 1 positional argument but 2 were given
+    —— 而且被 stream_reply 兜住了（情绪是表演，不能带崩对话），
+    只在 logs\error.log 留一行。表现是"聊天一切正常，就是脸永远不变表情"，
+    极难自己发现。回归测试见 tests/test_emotion_wiring.py。
+    """
     handlers = [h for h in handlers if h is not None]
     if not handlers:
         return None
 
-    def emit(text: str) -> None:
+    def emit(*args) -> None:
         for handler in handlers:
             try:
-                handler(text)
+                handler(*args)
             except Exception:
-                logger.exception("字幕接收方执行失败")
+                logger.exception("%s接收方执行失败", label)
 
     return emit
+
+
+def build_callbacks(face, console_face=None):
+    """按主循环的接法生成（字幕回调, 情绪回调）。
+
+    键盘模式和语音模式共用这一份接法 —— 免得改了一个忘了另一个，
+    也为了让测试能走"和线上同一段代码"，而不是自己另接一遍
+    （自己另接一遍的测试，接错了也测不出来）。
+    """
+    on_caption = _fanout(
+        "字幕",
+        face.publish_caption if face else None,
+        console_face.on_caption if console_face else None,
+    )
+    on_emotion = _fanout("情绪", face.publish_emotion if face else None)
+    return on_caption, on_emotion
 
 
 def run_text_mode(settings: Settings) -> None:
@@ -213,11 +240,7 @@ def run_text_mode(settings: Settings) -> None:
     face = attach_face(settings, state, synthesizer)
     console_face = attach_console_face(settings, state, synthesizer)
     attach_vision(settings, state, face)
-    on_caption = _caption_emitter(
-        face.publish_caption if face else None,
-        console_face.on_caption if console_face else None,
-    )
-    on_emotion = _caption_emitter(face.publish_emotion if face else None)
+    on_caption, on_emotion = build_callbacks(face, console_face)
     try:
         while True:
             try:
@@ -291,11 +314,7 @@ def run_voice_loop(settings: Settings) -> None:
     face = attach_face(settings, state, synthesizer)
     console_face = attach_console_face(settings, state, synthesizer)
     attach_vision(settings, state, face)
-    on_caption = _caption_emitter(
-        face.publish_caption if face else None,
-        console_face.on_caption if console_face else None,
-    )
-    on_emotion = _caption_emitter(face.publish_emotion if face else None)
+    on_caption, on_emotion = build_callbacks(face, console_face)
 
     # S5.5：开机采一段环境噪声，把静音阈值改成自适应的。
     # 笔记本和 N100 的麦克风噪声底完全不同，固定值搬过去会失效。

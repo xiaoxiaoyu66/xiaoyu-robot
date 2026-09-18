@@ -171,6 +171,14 @@ function drawMouth(kind, x, y, k) {
     ctx.beginPath();
     ctx.ellipse(x, y - 2, 9 * t, 12 * t, 0, 0, Math.PI * 2);
     ctx.fill();
+  } else if (kind === "soft") {
+    // 静止时的一条浅弧：只求"有张脸"，不求表达情绪，所以更短更淡
+    ctx.strokeStyle = "rgba(241,239,232,0.42)";
+    ctx.lineWidth = 6;
+    ctx.beginPath();
+    ctx.moveTo(x - 14, y - 2);
+    ctx.quadraticCurveTo(x, y + 5, x + 14, y - 2);
+    ctx.stroke();
   } else {
     const w = 26 * t;
     const d = 12 * t * (kind === "smile" ? 1 : -1);
@@ -325,6 +333,9 @@ function draw() {
     ctx.restore();
   } else if (MOUTH[m]) {
     drawMouth(MOUTH[m], cx + lookX * 0.4, mouthY, k);
+  } else if (state !== "error") {
+    // 待机/听话/思考都留一条浅弧，别让静止的脸空着（error 时不画 ）
+    drawMouth("soft", cx + lookX * 0.4, mouthY, 0.5);
   }
 
   ctx.restore();
