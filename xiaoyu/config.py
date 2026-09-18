@@ -241,6 +241,9 @@ class FaceConfig:
     host: str = "0.0.0.0"   # 只在家里 WiFi 用，不映射公网（v3 §3.1 安全边界）
     port: int = 8765
     token: str = "xiaoyu"   # 连接必须带 ?token=xxx，防局域网里别的设备误连
+    # 控制台表情脸：把同样的状态/字幕/口型事件翻译成字符画打进日志流。
+    # 调试时人盯着 PowerShell，浏览器里的脸照顾不到 —— 终端里得有分身。
+    console: bool = True
 
 
 @dataclass
@@ -291,6 +294,7 @@ class Settings:
                 enabled=_env_bool("XIAOYU_FACE_ENABLED", True),
                 port=_env_int("XIAOYU_FACE_PORT") or 8765,
                 token=_env_str("XIAOYU_FACE_TOKEN") or "xiaoyu",
+                console=_env_bool("XIAOYU_FACE_CONSOLE", True),
             ),
         )
         settings.paths.ensure_dirs()

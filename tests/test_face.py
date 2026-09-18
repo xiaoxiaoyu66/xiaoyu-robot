@@ -10,6 +10,7 @@ import numpy as np
 from xiaoyu.audio.player import mouth_level
 from xiaoyu.face import protocol
 from xiaoyu.face.server import FaceServer
+from xiaoyu.face.console import ConsoleFace, sparkline
 from xiaoyu.config import FaceConfig
 
 
@@ -104,6 +105,38 @@ class FaceServerBasicsTest(unittest.TestCase):
         if face.on_interrupt is not None:
             face.on_interrupt()
         self.assertEqual(called, [1])
+
+
+class ConsoleFaceTest(unittest.TestCase):
+    """控制台字符画脸：sparkline 和逐句收集。"""
+
+    def test_sparkline_empty_is_blank(self):
+        self.assertEqual(sparkline([]), " " * 8)
+
+    def test_sparkline_full_volume_hits_top(self):
+        bar = sparkline([1.0, 1.0, 1.0])
+        self.assertEqual(bar, "▁" * 2 + "█" * 3 + "▁" * 3)  # 居中补齐：低-高-低
+
+    def test_sparkline_clamps_out_of_range(self):
+        bar = sparkline([9.0, -3.0, 0.5])
+        self.assertTrue(all(c in "▁▂▃▄▅▆▇█" for c in bar))
+
+    def test_sparkline_downsamples_long_input(self):
+        bar = sparkline([0.1] * 100, width=8)
+        self.assertEqual(len(bar), 8)
+
+    def test_caption_flushes_buffer(self):
+        face = ConsoleFace()
+        face.on_level(0.3)
+        face.on_level(0.9)   # 播放期间攒音量
+        face.on_caption("你好")
+        self.assertEqual(face._levels, [])   # 打完字幕必须清空，不然两句混一起
+
+    def test_caption_ignores_blank(self):
+        face = ConsoleFace()
+        face.on_level(0.5)
+        face.on_caption("   ")
+        self.assertEqual(len(face._levels), 1)   # 空字幕不清空缓冲
 
 
 if __name__ == "__main__":

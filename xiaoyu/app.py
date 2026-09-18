@@ -132,6 +132,38 @@ def attach_face(settings: Settings, state: StateMachine, synthesizer):
     return face
 
 
+def attach_console_face(settings: Settings, state: StateMachine, synthesizer):
+    """控制台表情脸：脸在浏览器里够不着的时候，终端里有个字符画分身。
+
+    和 WebSocket 脸互不依赖 —— 浏览器脸没开 / websockets 没装，
+    这里照样工作（它只订阅状态机和播放器的本机事件）。
+    """
+    if not settings.face.enabled or not settings.face.console:
+        return None
+    from .face.console import ConsoleFace
+
+    console_face = ConsoleFace()
+    console_face.attach(state, synthesizer)
+    logger.info("控制台表情脸已启用（不想要就设 XIAOYU_FACE_CONSOLE=0）")
+    return console_face
+
+
+def _caption_emitter(*handlers):
+    """把多个字幕接收方（浏览器脸 + 控制台脸）合成一个回调。"""
+    handlers = [h for h in handlers if h is not None]
+    if not handlers:
+        return None
+
+    def emit(text: str) -> None:
+        for handler in handlers:
+            try:
+                handler(text)
+            except Exception:
+                logger.exception("字幕接收方执行失败")
+
+    return emit
+
+
 def run_text_mode(settings: Settings) -> None:
     """键盘模式：不用麦克风，直接打字验证"大脑 + 嘴"这一段。"""
     from .llm.client import DeepSeekClient
@@ -147,6 +179,11 @@ def run_text_mode(settings: Settings) -> None:
 
     state = StateMachine()
     face = attach_face(settings, state, synthesizer)
+    console_face = attach_console_face(settings, state, synthesizer)
+    on_caption = _caption_emitter(
+        face.publish_caption if face else None,
+        console_face.on_caption if console_face else None,
+    )
     try:
         while True:
             try:
@@ -164,7 +201,7 @@ def run_text_mode(settings: Settings) -> None:
             try:
                 synthesizer.speak_stream(
                     client.stream_reply(text),
-                    on_sentence=face.publish_caption if face else None,
+                    on_sentence=on_caption,
                 )
                 if face is not None and face.interrupted():
                     face.clear_interrupt()
@@ -215,6 +252,11 @@ def run_voice_loop(settings: Settings) -> None:
     client = DeepSeekClient(settings, memory=memory)
     detector = WakeWordDetector(settings)
     face = attach_face(settings, state, synthesizer)
+    console_face = attach_console_face(settings, state, synthesizer)
+    on_caption = _caption_emitter(
+        face.publish_caption if face else None,
+        console_face.on_caption if console_face else None,
+    )
     # 后台把对话连接建好。待机可能几十分钟，连接早被回收了，
     # 不预热的话每次“第一句话”都要多等 1.5 秒。
     client.warmup_async()
@@ -244,7 +286,7 @@ def run_voice_loop(settings: Settings) -> None:
                 try:
                     synthesizer.speak_stream(
                         client.stream_reply(text),
-                        on_sentence=face.publish_caption if face else None,
+                        on_sentence=on_caption,
                     )
                 except Exception:
                     logger.exception("回答失败，回到待机")
