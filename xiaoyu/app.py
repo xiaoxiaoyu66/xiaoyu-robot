@@ -294,7 +294,7 @@ def play_cue(synthesizer, kind: str, settings: Settings) -> None:
 
 
 # 主循环自愈（S5.5）：单轮异常不退出，连续失败这么多轮才放弃、
-# 交回给进程守护（run_forever.cmd / systemd）重启。退出原因写进 logs\error.log。
+# 交回给进程守护（scripts/guardian.py / systemd）重启。退出原因写进 logs\error.log。
 MAX_CONSECUTIVE_FAILURES = 5
 
 

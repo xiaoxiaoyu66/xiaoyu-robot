@@ -137,7 +137,9 @@ def setup_logging(
             sys.stderr,
             level=level,
             format=_CONSOLE_FMT,
-            colorize=True,
+            # 只给真终端上色：输出被重定向到文件时（常驻守护就是这么干的）
+            # 颜色码会变成一堆 [32m 噪声，把日志搞得没法读
+            colorize=sys.stderr.isatty(),
             backtrace=False,
             diagnose=False,
             filter=_redact_record,      # 脱敏

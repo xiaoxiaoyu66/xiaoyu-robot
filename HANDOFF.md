@@ -115,8 +115,8 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 234 个，全过）
-python -m pytest tests                   # 同一批用例，数字必须一致（也是 234）
+python -m unittest discover tests        # 跑测试（当前 251 个，全过）
+python -m pytest tests                   # 同一批用例，数字必须一致（也是 251）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --wake-report           # 按天统计唤醒次数（误唤醒率有数，S5.5）
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
@@ -178,7 +178,7 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   连续失败 5 次才退出并把原因写 `logs\error.log`）+ 自适应噪声底（开机采 0.3 秒，
   阈值 = 底噪 × 4.0，夹在 0.008~0.08）+ silero-vad 复判有没有人说话
   （模型缺失退回振幅启发式）+ 开机自启与进程守护
-  （`scripts\install_autostart.py` / `run_forever.cmd`）+ `WAKE_EVENT` 事件行
+  （`scripts\install_autostart.py` / `scripts\guardian.py`）+ `WAKE_EVENT` 事件行
   与 `python -m xiaoyu --wake-report` 按天统计误唤醒。判据见 §6.4。
 - **情绪系统：代码完成 + 真模型冒烟通过**（2026-09-18）。
   冒烟脚本 `.scratch/smoke_emotion.py`：真 DeepSeek 跑一轮，回调拿到 happy/0.9、
@@ -795,8 +795,14 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
    推理失败就退回老的振幅启发式 —— 那是现状，不会更糟。
    **这步是为搬家做的**：N100 挂的 USB 麦噪声底和笔记本完全不同，固定 0.015 大概率失效。
 3. **开机自启 + 进程守护**：`scripts\install_autostart.py` 注册计划任务
-   （登录时跑 `scripts\run_forever.cmd`）+ 电源设置（接电永不睡眠、合盖不休眠）；
-   守护循环挂了 5 秒自己爬起来，日志写 `logs\guardian.log`。
+   （登录时跑 `pythonw.exe scripts\guardian.py`，**全程没有窗口**）
+   + 电源设置（接电永不睡眠、合盖不休眠）；守护循环挂了 5 秒自己爬起来，
+   日志写 `logs\guardian.log`。
+   **2026-09-18 修过一次**：原方案走 `run_forever.cmd`，会弹黑窗口 ——
+   窗口被关 = 守护和本体一起连根死（guardian.log 里只有 starting、没有 exited）。
+   顺带把任务 XML 里另外两个「跑不满一周」的默认值也显式关掉：
+   `DisallowStartIfOnBatteries` / `StopIfGoingOnBatteries`（默认 true，拔电就停）
+   和 `ExecutionTimeLimit`（默认 PT72H，第 4 天系统掐掉）。
    还剩一步只能手点：Windows 更新 → 高级选项 → 使用时段（脚本会把步骤打出来）。
 4. **误唤醒率有数**：唤醒时打一行 `WAKE_EVENT | ts=... | keyword=...`，
    `python -m xiaoyu --wake-report` 按天统计，并把**凌晨 0~6 点**单独拎出来

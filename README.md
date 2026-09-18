@@ -189,7 +189,7 @@ x iǎo y ǔ :2.5 #0.5 @小宇
 
 ## 测试
 
-零依赖，随时可跑（当前 234 个）：
+零依赖，随时可跑（当前 251 个）：
 
 ```powershell
 python -m unittest discover tests -v
