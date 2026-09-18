@@ -89,7 +89,9 @@ def _next_step_hint(name: str) -> str:
     if name in {"唤醒模型", "识别模型", "VAD 模型"}:
         return "python scripts\\download_models.py"
     if name == "唤醒词文件":
-        return "新建 config\\keywords.txt，写：小宇 :2.5 #0.5 @小宇"
+        # 注意别在这里教用户直接写汉字 —— 汉字会让 sherpa-onnx 在 C++ 层崩掉，
+        # 连 Python 异常都抓不到。只能让他们跑脚本生成。
+        return "跑脚本生成：python scripts\\make_keywords.py 小柚子 --write"
     if name == "性格文件":
         return "新建 config\\persona.md，写它的人设"
     if name == "DeepSeek API Key":

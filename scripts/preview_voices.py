@@ -32,7 +32,7 @@ from xiaoyu.tts.engine import EdgeEngine, SherpaEngine
 
 logger = get_logger("scripts.preview_voices")
 
-DEFAULT_TEXT = "你好呀，我是小宇。今天过得怎么样，要不要一起聊聊天？"
+DEFAULT_TEXT = "你好呀，我是小柚子。今天过得怎么样，要不要一起聊聊天？"
 
 # 云端音色：在国内网络下这几个中文音色最稳、特点也最分明。
 # 想拿到完整列表：python -m edge_tts --list-voices

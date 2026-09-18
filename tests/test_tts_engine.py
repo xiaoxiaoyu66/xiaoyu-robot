@@ -99,7 +99,7 @@ class ResolveModelFilesTest(unittest.TestCase):
 
         files = resolve_model_files(d)
 
-        self.assertEqual(files.lexicon, d / "lexicon.txt")
+        self.assertEqual(files.lexicons, (d / "lexicon.txt",))
         self.assertEqual(files.dict_dir, d / "dict")
 
     # ---------------------------------------------------------- matcha
@@ -208,6 +208,65 @@ class LooksLikeMatchaTest(unittest.TestCase):
         self.assertTrue(_is_vocoder(Path("hifigan_v2.onnx")))
         self.assertFalse(_is_vocoder(Path("model-steps-3.onnx")))
         self.assertFalse(_is_vocoder(Path("zh_CN-huayan-medium.onnx")))
+
+
+@unittest.skipIf(resolve_model_files is None, _SKIP)
+class KokoroTest(unittest.TestCase):
+    """Kokoro 的识别。
+
+    判据是目录里有没有 voices.bin —— 只有它需要一张额外的音色表。
+    这一步必须排在 matcha 判断**之前**，因为 Kokoro 的主模型也叫 model.onnx，
+    跟普通 vits 长得一模一样，光看文件名分不出来。
+    """
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory(prefix="xiaoyu_kokoro_")
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _make_kokoro(self, name: str = "kokoro-int8-multi-lang-v1_1") -> Path:
+        d = self.root / name
+        _touch(d / "tokens.txt", 100)
+        # 尺寸无所谓 —— 这里只验证"认不认得出来"，不用真造 100MB 的假文件
+        _touch(d / "model.int8.onnx", 10_000_000)
+        _touch(d / "voices.bin", 5_000_000)
+        (d / "espeak-ng-data").mkdir(exist_ok=True)
+        (d / "dict").mkdir(exist_ok=True)
+        _touch(d / "lexicon-zh.txt", 100)
+        _touch(d / "lexicon-us-en.txt", 100)
+        return d
+
+    def test_voices_bin_means_kokoro(self) -> None:
+        self.assertEqual(resolve_model_files(self._make_kokoro()).kind, "kokoro")
+
+    def test_voices_bin_is_exposed(self) -> None:
+        d = self._make_kokoro()
+        self.assertEqual(resolve_model_files(d).voices, d / "voices.bin")
+
+    def test_kokoro_is_not_mistaken_for_vits(self) -> None:
+        self.assertNotEqual(resolve_model_files(self._make_kokoro()).kind, "vits")
+
+    def test_kokoro_does_not_need_an_external_vocoder(self) -> None:
+        self.assertIsNone(resolve_model_files(self._make_kokoro()).vocoder)
+
+    def test_all_lexicons_are_collected(self) -> None:
+        files = resolve_model_files(self._make_kokoro())
+        joined = ",".join(str(p) for p in files.lexicons)
+        self.assertIn("lexicon-zh.txt", joined)
+        self.assertIn("lexicon-us-en.txt", joined)
+
+    def test_a_plain_vits_dir_is_not_kokoro(self) -> None:
+        """反向也要测：普通 vits 目录不能被误判成 Kokoro。"""
+        d = self.root / "vits-piper-zh_CN-huayan-medium"
+        _touch(d / "tokens.txt", 100)
+        _touch(d / "zh_CN-huayan-medium.onnx", 60_000_000)
+
+        files = resolve_model_files(d)
+
+        self.assertEqual(files.kind, "vits")
+        self.assertIsNone(files.voices)
 
 
 try:

@@ -54,13 +54,16 @@ class Speech:
 class ModelFiles:
     """一个本地 TTS 模型要用到的所有文件。"""
 
-    kind: str                  # "vits" 或 "matcha"
-    model: Path                # vits 的主模型 / matcha 的声学模型
+    kind: str                  # "vits" / "matcha" / "kokoro"
+    model: Path                # 主模型（vits / kokoro）/ 声学模型（matcha）
     tokens: Path
     vocoder: Path | None = None
-    lexicon: Path | None = None
+    # 发音词典。vits 通常只有一个，Kokoro 中英各一份（lexicon-zh.txt + lexicon-us-en.txt），
+    # 所以统一按"一列文件"处理，用的时候拼成逗号分隔的字符串喂给 sherpa-onnx。
+    lexicons: tuple[Path, ...] = ()
     dict_dir: Path | None = None
     data_dir: Path | None = None
+    voices: Path | None = None         # 只有 Kokoro 有：多音色数据 voices.bin
     rule_fsts: str = ""
 
 
@@ -89,6 +92,15 @@ def _looks_like_matcha(model: Path) -> bool:
     return model.name.lower().startswith("model-steps-")
 
 
+def _looks_like_kokoro(model_dir: Path) -> bool:
+    """这个目录是不是 Kokoro？
+
+    判据很硬：**只有 Kokoro 需要额外的 voices.bin** 来存多音色数据。
+    vits / piper / matcha 都是单音色，说话人信息编在模型里。
+    """
+    return (model_dir / "voices.bin").exists()
+
+
 def resolve_model_files(model_dir: Path, vocoder: Path | None = None) -> ModelFiles:
     """搞清楚这个模型目录里是哪种模型、每个文件在哪。
 
@@ -98,13 +110,15 @@ def resolve_model_files(model_dir: Path, vocoder: Path | None = None) -> ModelFi
         写死文件名的话，换模型就等于改代码。
         所以这里按"目录里有什么"来判断，加新模型通常不用动这个函数。
 
-    判断规则（两步，顺序不能换）：
+    判断规则（三步，顺序不能换）：
         1. 先在目录里挑出"声学模型"：排除名字像声码器的那些，剩下的取最大的一个。
-        2. 再看这个声学模型**自己的文件名**像不像 matcha（见 _looks_like_matcha）：
+        2. 目录里有 voices.bin 就是 Kokoro（见 _looks_like_kokoro）。
+           这一步必须排在最前 —— Kokoro 的文件名（model.onnx）和别的模型没有明显区别。
+        3. 再看这个声学模型**自己的文件名**像不像 matcha（见 _looks_like_matcha）：
            像   -> matcha，另外还要找一个声码器配它
            不像 -> vits。piper 也是 vits 的一种，只是多一个 espeak-ng-data 目录
 
-        第 2 步**不能**偷懒写成"目录旁边有 vocos 就当 matcha" ——
+        第 3 步**不能**偷懒写成"目录旁边有 vocos 就当 matcha" ——
         那个写法会把 piper 也判成 matcha，报一个看不懂的错。原因见 _looks_like_matcha。
     """
     model_dir = Path(model_dir)
@@ -124,7 +138,10 @@ def resolve_model_files(model_dir: Path, vocoder: Path | None = None) -> ModelFi
     # 声学模型永远是最大的那个（声码器一般更小）
     model = max(onnx_files, key=lambda p: p.stat().st_size)
 
-    if _looks_like_matcha(model):
+    if _looks_like_kokoro(model_dir):
+        kind = "kokoro"
+        vocoder = None
+    elif _looks_like_matcha(model):
         kind = "matcha"
         if vocoder is None:
             own = sorted(p for p in model_dir.glob("*.onnx") if _is_vocoder(p))
@@ -154,9 +171,15 @@ def resolve_model_files(model_dir: Path, vocoder: Path | None = None) -> ModelFi
         kind = "vits"
         vocoder = None
 
-    lexicon = model_dir / "lexicon.txt"
     dict_dir = model_dir / "dict"
     data_dir = model_dir / "espeak-ng-data"
+
+    if kind == "kokoro":
+        # 中英各一份词典（lexicon-zh.txt / lexicon-us-en.txt ...），要全给它
+        lexicons = tuple(sorted(model_dir.glob("lexicon-*.txt")))
+    else:
+        single = model_dir / "lexicon.txt"
+        lexicons = (single,) if single.exists() else ()
 
     # 中文模型靠这些 .fst 规则把数字/日期念对（2026 -> 二零二六）
     rule_fsts = ",".join(str(p) for p in sorted(model_dir.glob("*.fst")))
@@ -166,9 +189,10 @@ def resolve_model_files(model_dir: Path, vocoder: Path | None = None) -> ModelFi
         model=model,
         tokens=tokens,
         vocoder=vocoder if kind == "matcha" else None,
-        lexicon=lexicon if lexicon.exists() else None,
+        lexicons=lexicons,
         dict_dir=dict_dir if dict_dir.is_dir() else None,
         data_dir=data_dir if data_dir.is_dir() else None,
+        voices=(model_dir / "voices.bin") if kind == "kokoro" else None,
         rule_fsts=rule_fsts,
     )
 
@@ -202,13 +226,32 @@ class SherpaEngine:
             files.model.name,
             files.vocoder.name if files.vocoder else "无（模型自带）",
         )
+        if files.voices is not None:
+            logger.info("  Kokoro 音色表：{}（换音色改 XIAOYU_TTS_SID）", files.voices.name)
 
+        lexicon_arg = ",".join(str(p) for p in files.lexicons)
         common = {
             "tokens": str(files.tokens),
-            "lexicon": str(files.lexicon) if files.lexicon else "",
+            "lexicon": lexicon_arg,
             "dict_dir": str(files.dict_dir) if files.dict_dir else "",
         }
-        if files.kind == "matcha":
+        if files.kind == "kokoro":
+            # Kokoro 是"一个模型 + 一张音色表（voices.bin）"，
+            # 换音色不用换模型，只改 speaker_id —— 这正是它值得引入的原因。
+            model_config = sherpa_onnx.OfflineTtsModelConfig(
+                kokoro=sherpa_onnx.OfflineTtsKokoroModelConfig(
+                    model=str(files.model),
+                    voices=str(files.voices),
+                    tokens=str(files.tokens),
+                    data_dir=str(files.data_dir) if files.data_dir else "",
+                    dict_dir=str(files.dict_dir) if files.dict_dir else "",
+                    lexicon=lexicon_arg,
+                    length_scale=1.0 / max(speed, 0.1),
+                ),
+                num_threads=num_threads,
+                provider="cpu",
+            )
+        elif files.kind == "matcha":
             model_config = sherpa_onnx.OfflineTtsModelConfig(
                 matcha=sherpa_onnx.OfflineTtsMatchaModelConfig(
                     acoustic_model=str(files.model),

@@ -1,8 +1,8 @@
 """把中文/英文唤醒词转成 KWS 模型认识的音素格式。
 
 用法（在项目根目录下跑）：
-    python scripts\\make_keywords.py 小宇                # 只打印，看看长什么样
-    python scripts\\make_keywords.py 小宇 --write         # 直接写进 config/keywords.txt
+    python scripts\\make_keywords.py 小柚子                # 只打印，看看长什么样
+    python scripts\\make_keywords.py 小柚子 --write         # 直接写进 config/keywords.txt
     python scripts\\make_keywords.py hey --write          # 英文也行（查模型词典）
     python scripts\\make_keywords.py 二娃 --write --threshold 3.0
 

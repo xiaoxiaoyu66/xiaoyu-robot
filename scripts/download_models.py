@@ -84,6 +84,16 @@ MODELS: list[ModelItem] = [
         archive=True,
         hint="*.onnx",
     ),
+    ModelItem(
+        name="语音合成模型（Kokoro 中英多说话人，103 音色，音质最好）",
+        # int8 量化版：比 fp32 小一半、快一截，音质几乎听不出差别。
+        # 它的中文音色名沿用了微软那一套（zf_xiaoxiao / zf_xiaoyi / ...），
+        # 所以想从 edge-tts 换回本地又不想换嗓音，可以直接挑 zf_xiaoxiao。
+        url=f"{_RELEASE}/tts-models/kokoro-int8-multi-lang-v1_1.tar.bz2",
+        dest=PROJECT_ROOT / "models" / "tts" / "kokoro-int8-multi-lang-v1_1",
+        archive=True,
+        hint="*.onnx",
+    ),
 ]
 
 

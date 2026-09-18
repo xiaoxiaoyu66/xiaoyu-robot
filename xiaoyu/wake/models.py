@@ -61,7 +61,7 @@ def parse_keyword_line(line: str) -> tuple[list[str], str]:
     """拆一行唤醒词配置，返回 (音素列表, 显示名)。
 
     格式：  音素序列 :阈值 #增强 @显示名
-    例如：  x iǎo y ǔ :2.5 #0.5 @小宇
+    例如：  x iǎo y ǔ :2.5 #0.5 @小柚子
     """
     head = line.split("@")[0]              # 去掉 @显示名
     spec = head.split(":")[0].strip()      # 去掉 :阈值 部分
@@ -85,7 +85,7 @@ def prepare_keywords_file(
     if not source.exists():
         raise FileNotFoundError(
             f"唤醒词文件不存在：{source}\n"
-            "先用脚本生成：python scripts\\make_keywords.py 小宇 --write"
+            "先用脚本生成：python scripts\\make_keywords.py 小柚子 --write"
         )
 
     kept: list[str] = []
@@ -105,7 +105,7 @@ def prepare_keywords_file(
                 f"keywords.txt 第 {lineno} 行的音素不在模型词表里：{' '.join(missing)}\n"
                 f"  这一行是：{line}\n"
                 "  中文唤醒词必须写成「声母 + 带声调韵母」，不能直接写汉字。\n"
-                "  别手写拼音，用脚本生成：python scripts\\make_keywords.py 小宇 --write"
+                "  别手写拼音，用脚本生成：python scripts\\make_keywords.py 小柚子 --write"
             )
 
         kept.append(line)

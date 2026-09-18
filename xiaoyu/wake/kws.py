@@ -10,11 +10,11 @@
     不是直接写汉字。写汉字会让 sherpa-onnx 在 C++ 层报错退出，
     连 Python 异常都抓不到。
 
-        错：  小宇 :2.5 #0.5 @小宇
-        对：  x iǎo y ǔ :2.5 #0.5 @小宇
+        错：  小柚子 :2.5 #0.5 @小柚子
+        对：  x iǎo y ǔ :2.5 #0.5 @小柚子
 
     别手写拼音，用脚本生成：
-        python scripts\\make_keywords.py 小宇 --write
+        python scripts\\make_keywords.py 小柚子 --write
 
     格式：  音素序列 :阈值 #增强 @显示名
     阈值越大越难唤醒（越不容易误触发），一般 2.0 ~ 4.0
