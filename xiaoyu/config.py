@@ -202,6 +202,8 @@ class TtsConfig:
     voice: str = "zh-CN-XiaoxiaoNeural"
     rate: str = "+0%"                 # 语速，例如 "+10%"
     volume: str = "+0%"
+    # 音调。这几个值一起决定"音色气质"：升调更亮更年轻，降调更沉稳冷静
+    pitch: str = "+0Hz"               # 例如 "-10Hz"、" +10Hz"
     # ---- local 引擎用 ----
     local_model: str = "vits-piper-zh_CN-huayan-medium"   # models/tts/ 下的目录名
     vocoder: str = ""                 # 只有 matcha 系模型需要（单独的 onnx 文件名）
@@ -257,6 +259,9 @@ class Settings:
             tts=TtsConfig(
                 engine=(_env_str("XIAOYU_TTS_ENGINE") or "local").lower(),
                 voice=_env_str("XIAOYU_TTS_VOICE") or "zh-CN-XiaoxiaoNeural",
+                rate=_env_str("XIAOYU_TTS_RATE") or "+0%",
+                volume=_env_str("XIAOYU_TTS_VOLUME") or "+0%",
+                pitch=_env_str("XIAOYU_TTS_PITCH") or "+0Hz",
                 local_model=_env_str("XIAOYU_TTS_MODEL")
                 or "vits-piper-zh_CN-huayan-medium",
                 vocoder=_env_str("XIAOYU_TTS_VOCODER") or "",

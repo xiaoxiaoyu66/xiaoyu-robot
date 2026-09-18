@@ -287,11 +287,13 @@ class EdgeEngine:
         voice: str = "zh-CN-XiaoxiaoNeural",
         rate: str = "+0%",
         volume: str = "+0%",
+        pitch: str = "+0Hz",
         tmp_dir: Path | None = None,
     ) -> None:
         self._voice = voice
         self._rate = rate
         self._volume = volume
+        self._pitch = pitch
         self._tmp_dir = Path(tmp_dir) if tmp_dir else Path(".")
         self._tmp_dir.mkdir(parents=True, exist_ok=True)
         self.samplerate = 24000        # edge-tts 固定 24kHz，实际以解码结果为准
@@ -307,7 +309,11 @@ class EdgeEngine:
 
         async def run() -> None:
             await edge_tts.Communicate(
-                text, self._voice, rate=self._rate, volume=self._volume
+                text,
+                self._voice,
+                rate=self._rate,
+                volume=self._volume,
+                pitch=self._pitch,
             ).save(str(path))
 
         try:
@@ -335,7 +341,7 @@ def build_engine(settings: Settings):
     if cfg.engine != "local":
         logger.info("按配置使用 edge-tts（音质优先，但每句话要联网）")
         return EdgeEngine(
-            voice=cfg.voice, rate=cfg.rate, volume=cfg.volume,
+            voice=cfg.voice, rate=cfg.rate, volume=cfg.volume, pitch=cfg.pitch,
             tmp_dir=settings.paths.data / "tts_cache",
         )
 
@@ -355,7 +361,7 @@ def build_engine(settings: Settings):
             "要修的话：python scripts\\download_models.py --prefix https://gh-proxy.com/"
         )
         return EdgeEngine(
-            voice=cfg.voice, rate=cfg.rate, volume=cfg.volume,
+            voice=cfg.voice, rate=cfg.rate, volume=cfg.volume, pitch=cfg.pitch,
             tmp_dir=settings.paths.data / "tts_cache",
         )
     return engine
