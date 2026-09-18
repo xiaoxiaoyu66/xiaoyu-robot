@@ -6,7 +6,7 @@
 > 所以这里**只写事实和实测证据，不写猜测**。改了代码就回来更新它，
 > 尤其是"待办"和"现状"两节，过期的交接文档比没有更糟。
 >
-> 最后更新：2026-09-18（4a / 4b 真人验收通过；唤醒词「小柚子」；实测否决 edge 提速，默认引擎改回本地）
+> 最后更新：2026-09-18（S5 起步：协议 + 触屏打断 + 最简脸已实现待真人验证；4a / 4b 真人验收通过；唤醒词「小柚子」）
 
 ---
 
@@ -45,7 +45,11 @@
   stream() 边下边播的首块 ≈ 整句下完的时间（微软整句生成完才吐数据）。
   完整数据见 §6.3。结论：edge 的慢买不到回来，只能二选一。
 
-**下一件可以干的是 4c（可选）或者搬到 N100。**
+**S5 已经起步**（2026-09-18 晚）：WebSocket 协议（state/mouth/caption + interrupt）、
+触屏打断、最简表情脸（`face/index.html`，Canvas 画的，会眨眼、嘴跟音量动、显示字幕）
+都实现并冒烟通过；**待真人验证**。Live2D 换皮是以后的事，协议不变。
+
+**下一件：真人验证 S5**（打开脸 → 聊天看嘴动 → 点脸打断），然后 4c（可选）或者 N100。
 
 **路线（用户 2026-09-18 定的）**：最终目标是**随身携带的独立个体**（不依赖电脑），
 但**目前只做"桌面独立成体"**，随身以后再说：
@@ -136,6 +140,14 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   补这个的原因：`MemoryStore` 在 `tests/` 里**原本一个引用都没有**（grep 零匹配），
   而 S4 三个台阶全都要动它。
 
+- **S5 表情脸（协议 + 触屏打断 + 最简脸）：代码完成 + 冒烟通过**（2026-09-18 晚）。
+  真起 FaceServer + 真 WebSocket 客户端验证：错 token 被拒（关闭码 4401）、
+  三类广播（state/mouth/caption）全收到、interrupt 事件 + 回调到位
+  （脚本 `.scratch/smoke_face.py`，以后改了 face 就重跑它）。
+  **待真人验证**：浏览器打开脸 → 状态/字幕/口型跟随 → 点脸打断。
+- **测试 178 → 198 个全过**。新增 `tests/test_face.py`（协议/口型/打断事件）和
+  `tests/test_speak_stream_interrupt.py`（触屏打断：中途停、关大模型流、标志保留给主控）。
+
 ### 未验证（别当成已完成）
 
 - 提示音在真实唤醒流程里的体感效果（用户没提，说明至少不烦人，但也没说好）。
@@ -151,7 +163,7 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
 | S2 有脑子 | ✅ DeepSeek 已接通，首句 0.6 秒 |
 | S3 唤醒词 | ✅ 真人验证通过 |
 | S4 性格 + 记忆 | 🟢 4a / 4b 真人验证通过（2026-09-18）；4c 向量检索可选 |
-| S5 表情脸 | ⬜ 未开始 |
+| S5 表情脸 | 🟡 协议 + 触屏打断 + 最简脸已实现（待真人验证）；Live2D 未开始 |
 | S6 眼睛 / 独立成体 | ⬜ 未开始 |
 
 ---
@@ -297,6 +309,11 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
     → 绕法：`git -c credential.helper= push "https://<用户名>:<token>@github.com/..." main`，
     token 用 `"protocol=https`nhost=github.com`n" | git credential-manager get` 现取，
     **别写进任何文档**。用户自己开的正常终端窗口里没有这个坑。
+22. **这个 AI 环境里 pip 直连 pypi.org 会读超时**，换清华镜像也连不上
+    （沙箱只放行它自己的本地代理，git 走的就是那个）。
+    → 装包用 `pip install --proxy http://127.0.0.1:<端口> 包名`，端口看 git
+    curl trace 里的 `Trying 127.0.0.1:xxxxx`（本次实测 45895，可能会变）。
+    用户自己的终端窗口里没有这个坑。
 
 ---
 
@@ -612,6 +629,35 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
 想要"本地 + 好听 + 快"，在 x86 CPU 上目前没有便宜的两全解 ——
 要么接受 edge 的服务端延迟（首句 ≈ 0.5 VAD + 0.14 识别 + 0.6 大模型 + 1.2~1.6 edge ≈ 2.4~2.8 秒），
 要么用 piper / matcha（快、但没那么"甜"）。
+
+---
+
+### 🟡 S5 · 表情脸 + 触屏打断（2026-09-18 起步，待真人验证）
+
+1. **协议**（`xiaoyu/face/protocol.py`，纯逻辑）：state / mouth / caption 三类事件
+   + interrupt 一条命令；token 校验（`?token=xxx`，错 token 关闭码 4401）。
+2. **WebSocket 服务**（`xiaoyu/face/server.py`）：独立守护线程 + 自带 asyncio 循环，
+   主控的串行循环零改动；广播走 `run_coroutine_threadsafe`，脸卡了不影响主控。
+   websockets 延迟到 start() 才 import —— 没装这个包只是脸不启用，语音照常。
+3. **播放器改造**（`xiaoyu/audio/player.py`）：`sd.play` → `OutputStream` 分块写，
+   每 50ms 一块算 RMS（`mouth_level()`）推给脸当口型；`stop()` 在块间响应，
+   触屏打断即刻停（旧版 sd.play 中途停不下来）。
+4. **触屏打断**（`xiaoyu/tts/synthesizer.py` + `app.py`）：点脸 →
+   `Synthesizer.interrupt()`（停声音 + 丢队列 + close 大模型流，半截不进历史）→
+   主控等 0.2 秒余音散掉 → 开麦续听（半双工不破）。
+   **键盘模式 `--text` 也接了脸**，调试脸不用开麦克风。
+5. **最简脸**（`face/index.html`，单文件零构建）：Canvas 圆脸 + 随机眨眼 +
+   嘴跟 mouth.level 动 + 状态光环（idle 黄 / listening 绿 / thinking 橙 / speaking 蓝）
+   + 字幕 + 点脸发 interrupt + 断线 3 秒自动重连。
+   **这是"先完成"版**；Live2D 换皮（Vue3 + pixi-live2d-display，pin pixi.js@6）
+   以后做，协议不变只换消费端。
+
+**验收动作（还没做，用户下次开工第一件事）**：
+`python -m xiaoyu --text` → 浏览器打开 `face/index.html?token=xiaoyu` →
+打字聊天：看状态光环变化、字幕、嘴跟声音动 → 它说话时点一下脸，它应立刻停。
+验完再 `python -m xiaoyu` 语音模式验一遍（含唤醒 → 打断全程）。
+配置在 `.env`：`XIAOYU_FACE_ENABLED / XIAOYU_FACE_PORT / XIAOYU_FACE_TOKEN`
+（网页地址里的 `?token=` 要和 XIAOYU_FACE_TOKEN 一致）。
 
 ---
 

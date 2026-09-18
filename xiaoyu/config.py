@@ -233,6 +233,16 @@ class MemoryConfig:
     model_name: str = "BAAI/bge-small-zh-v1.5"
 
 
+@dataclass(frozen=True)
+class FaceConfig:
+    """表情脸（S5）。脸是纯消费者：服务起不来、脸没开，都不影响主流程。"""
+
+    enabled: bool = True
+    host: str = "0.0.0.0"   # 只在家里 WiFi 用，不映射公网（v3 §3.1 安全边界）
+    port: int = 8765
+    token: str = "xiaoyu"   # 连接必须带 ?token=xxx，防局域网里别的设备误连
+
+
 @dataclass
 class Settings:
     paths: Paths = field(default_factory=Paths)
@@ -242,6 +252,7 @@ class Settings:
     tts: TtsConfig = field(default_factory=TtsConfig)
     llm: LlmConfig = field(default_factory=LlmConfig)
     memory: MemoryConfig = field(default_factory=MemoryConfig)
+    face: FaceConfig = field(default_factory=FaceConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -275,6 +286,11 @@ class Settings:
                 top_k=_env_int("XIAOYU_MEMORY_TOP_K") or 3,
                 # 调试"事实积累"时把它调小（比如 3），聊几轮就能看到效果
                 summarize_every=_env_int("XIAOYU_MEMORY_SUMMARIZE_EVERY") or 20,
+            ),
+            face=FaceConfig(
+                enabled=_env_bool("XIAOYU_FACE_ENABLED", True),
+                port=_env_int("XIAOYU_FACE_PORT") or 8765,
+                token=_env_str("XIAOYU_FACE_TOKEN") or "xiaoyu",
             ),
         )
         settings.paths.ensure_dirs()
@@ -311,6 +327,7 @@ class Settings:
             ("soundfile", "解码 mp3 / 音频文件"),
             ("openai", "大模型对话"),
             ("sentence_transformers", "记忆（S4 才需要）"),
+            ("websockets", "表情脸（S5）"),
         ]:
             found = importlib.util.find_spec(pkg) is not None
             items.append(CheckItem(f"依赖 {pkg}", found, purpose))

@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>小柚子</title>
+<style>
+  html, body {
+    margin: 0; height: 100%;
+    background: #fdf6ec;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
+    overflow: hidden;
+    -webkit-tap-highlight-color: transparent;
+  }
+  #wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
+  canvas { touch-action: none; cursor: pointer; }
+  #caption {
+    min-height: 1.6em; font-size: 20px; color: #5b4a3a;
+    max-width: 80vw; text-align: center; line-height: 1.5;
+  }
+  #status { font-size: 13px; color: #a08c78; display: flex; align-items: center; gap: 6px; }
+  #dot { width: 10px; height: 10px; border-radius: 50%; background: #d9534f; transition: background .3s; }
+  #dot.on { background: #5cb85c; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="face" width="520" height="420"></canvas>
+  <div id="caption"></div>
+  <div id="status"><span id="dot"></span><span id="statusText">连接中……</span></div>
+</div>
+<script>
+// ---------- 连接参数：用 ?token=xxx 覆盖，默认 xiaoyu ----------
+const qs = new URLSearchParams(location.search);
+const TOKEN = qs.get("token") || "xiaoyu";
+const HOST = qs.get("host") || location.hostname || "localhost";
+const PORT = qs.get("port") || "8765";
+
+const canvas = document.getElementById("face");
+const ctx = canvas.getContext("2d");
+const captionEl = document.getElementById("caption");
+const dotEl = document.getElementById("dot");
+const statusEl = document.getElementById("statusText");
+
+// ---------- 状态 ----------
+let state = "idle";        // idle / listening / thinking / speaking / error
+let mouthTarget = 0;       // 主控推来的口型目标值 0~1
+let mouthShown = 0;        // 平滑后的显示值
+let blink = 0;             // >0 表示正在闭眼（帧数）
+let nextBlink = 120;       // 距下次眨眼的帧数
+let t = 0;                 // 帧计数（呼吸动画用）
+
+const RING = {
+  idle:      "#e8c9a0",
+  listening: "#7bc96f",
+  thinking:  "#f0a35e",
+  speaking:  "#6ea8fe",
+  error:     "#e06c6c",
+};
+const LABEL = {
+  idle: "待机", listening: "听你说话", thinking: "在想",
+  speaking: "在说", error: "出错了",
+};
+
+// ---------- WebSocket ----------
+let ws = null;
+let retryTimer = null;
+
+function connect() {
+  const url = `ws://${HOST}:${PORT}/?token=${encodeURIComponent(TOKEN)}`;
+  ws = new WebSocket(url);
+  ws.onopen = () => {
+    dotEl.classList.add("on");
+    statusEl.textContent = `已连接 ${HOST}:${PORT}`;
+  };
+  ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === "state") {
+      state = msg.state in RING ? msg.state : "idle";
+      if (state !== "speaking") mouthTarget = 0;
+      if (state === "idle") captionEl.textContent = "";
+      statusEl.textContent = `已连接 · ${LABEL[state] || state}`;
+    } else if (msg.type === "mouth") {
+      mouthTarget = Math.max(0, Math.min(1, msg.level || 0));
+    } else if (msg.type === "caption") {
+      captionEl.textContent = msg.text || "";
+    }
+  };
+  ws.onclose = () => {
+    dotEl.classList.remove("on");
+    statusEl.textContent = "断了，3 秒后重连……";
+    state = "error";
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(connect, 3000);
+  };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+connect();
+
+// 点脸 = 打断（说的时候点才有意义，主控自己判断）
+canvas.addEventListener("pointerdown", () => {
+  if (ws && ws.readyState === WebSocket.OPEN) {
+    ws.send(JSON.stringify({ type: "interrupt" }));
+  }
+});
+
+// ---------- 画脸 ----------
+function draw() {
+  t++;
+  const W = canvas.width, H = canvas.height;
+  const cx = W / 2, cy = H / 2 - 10;
+  ctx.clearRect(0, 0, W, H);
+
+  // 呼吸：待机时轻轻起伏
+  const breathe = state === "idle" ? 1 + Math.sin(t / 40) * 0.012 : 1;
+  const R = 130 * breathe;
+
+  // 状态色光环
+  ctx.beginPath();
+  ctx.arc(cx, cy, R + 22, 0, Math.PI * 2);
+  ctx.lineWidth = 10;
+  ctx.strokeStyle = RING[state] || RING.idle;
+  ctx.globalAlpha = 0.55;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // 脸
+  const grad = ctx.createRadialGradient(cx - 30, cy - 40, 20, cx, cy, R);
+  grad.addColorStop(0, "#fff3dd");
+  grad.addColorStop(1, "#ffe1b0");
+  ctx.beginPath();
+  ctx.arc(cx, cy, R, 0, Math.PI * 2);
+  ctx.fillStyle = grad;
+  ctx.fill();
+
+  // 眼睛
+  if (--nextBlink <= 0) { blink = 8; nextBlink = 140 + Math.random() * 160; }
+  const eyeOpen = blink > 0 ? 0.08 : (state === "listening" ? 1.15 : 1);
+  if (blink > 0) blink--;
+  const eyeY = cy - 30;
+  const lookUp = state === "thinking" ? -8 : 0;
+  for (const dx of [-48, 48]) {
+    ctx.save();
+    ctx.translate(cx + dx, eyeY);
+    ctx.scale(1, eyeOpen);
+    ctx.beginPath();
+    ctx.arc(0, 0, 15, 0, Math.PI * 2);
+    ctx.fillStyle = "#4a3728";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(4, lookUp - 2, 5, 0, Math.PI * 2);
+    ctx.fillStyle = "#ffffff";
+    ctx.globalAlpha = 0.85;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+    ctx.restore();
+  }
+
+  // 嘴：speaking 时跟音量动，其他状态是一条微笑弧线
+  mouthShown += (mouthTarget - mouthShown) * 0.35;
+  const mouthY = cy + 42;
+  if (mouthShown > 0.03) {
+    const h = 4 + mouthShown * 42;
+    const w = 62 - mouthShown * 14;
+    ctx.beginPath();
+    ctx.ellipse(cx, mouthY, w, h, 0, 0, Math.PI * 2);
+    ctx.fillStyle = "#8a5a3a";
+    ctx.fill();
+  } else {
+    ctx.beginPath();
+    ctx.arc(cx, mouthY - 8, 30, Math.PI * 0.18, Math.PI * 0.82);
+    ctx.lineWidth = 6;
+    ctx.lineCap = "round";
+    ctx.strokeStyle = "#8a5a3a";
+    ctx.stroke();
+  }
+
+  // 腮红
+  ctx.globalAlpha = 0.35;
+  ctx.fillStyle = "#ffb0a0";
+  for (const dx of [-82, 82]) {
+    ctx.beginPath();
+    ctx.ellipse(cx + dx, cy + 12, 18, 11, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+
+  requestAnimationFrame(draw);
+}
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>

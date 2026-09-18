@@ -26,7 +26,7 @@
 | S2 | 有脑子（DeepSeek 流式对话） | ✅ 首句出声 0.6 秒（拆解见 `docs/总方案_v2` §1.3.1） |
 | S3 | 唤醒词（喊"小宇"就醒） | ✅ 2026-09-17 真人验证通过 |
 | S4 | 性格 + 长期记忆 | ✅ 4a / 4b 真人验证通过（2026-09-18）；4c 向量检索可选 |
-| S5 | 表情脸（Live2D） | ⬜ 未开始 |
+| S5 | 表情脸 + 触屏打断 | 🟡 协议 + 触屏打断 + 最简脸已实现（待真人验证）；Live2D 换皮未开始 |
 | S6 | 眼睛 / 独立成体 | ⬜ 未开始 |
 
 > 4a 做的事：启动时把最近的对话从 SQLite 读回上下文，并告诉模型"现在几点、上次聊天是多久以前"。
@@ -53,6 +53,7 @@ XiaoYu Robot/
 │  ├─ tts/                 文字转语音（本地 sherpa-onnx，可切 edge-tts）
 │  ├─ llm/                 大模型对话（DeepSeek 流式）
 │  ├─ memory/              记忆（SQLite，向量检索预留）
+│  ├─ face/                表情脸（S5 的协议和服务；网页在仓库根的 face/）
 │  └─ vision/              视觉（S6 占位）
 ├─ scripts/
 │  ├─ check_audio.py       S0 音频自检
@@ -66,6 +67,7 @@ XiaoYu Robot/
 ├─ models/                 模型文件（不进 git）
 ├─ data/                   SQLite、TTS 缓存（不进 git）
 ├─ logs/                   日志文件（不进 git）
+├─ face/                   表情脸网页：浏览器打开 index.html?token=xiaoyu
 └─ docs/                   设计文档
 ```
 
@@ -150,6 +152,7 @@ XIAOYU_LOG_LEVEL=DEBUG      # 排查问题时打开，平时用 INFO
 | 唤醒词（用 `scripts\make_keywords.py` 生成） | `config/keywords.txt` |
 | 小宇的性格 | `config/persona.md` |
 | API Key / 日志级别 / 麦克风编号 | `.env` |
+| 表情脸开关 / 端口 / token | `.env` 的 `XIAOYU_FACE_*` |
 | 采样率、静音阈值、音色、模型名 | `xiaoyu/config.py` |
 
 ### 换唤醒词（别手写，用脚本）

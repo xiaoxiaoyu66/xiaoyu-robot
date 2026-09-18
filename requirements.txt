@@ -21,6 +21,9 @@ pypinyin>=0.53
 # ---------- 大模型（S2）----------
 openai>=1.40
 
+# ---------- 表情脸（S5，主控和脸之间的 WebSocket）----------
+websockets>=12
+
 # ---------- 记忆（S4 再装，会连带下载约 2GB PyTorch）----------
 # sentence-transformers>=3.0
 

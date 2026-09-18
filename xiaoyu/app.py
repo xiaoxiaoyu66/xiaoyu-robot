@@ -8,7 +8,8 @@
 关于"半双工"（重要）：
     这个循环是严格串行的 —— 听唤醒词时开麦，说话时就关麦，
     所以它不会听到自己的声音、不会自己唤醒自己。
-    等以后要做"打断"功能时，再单独处理回声问题。
+    S5 已实现"触屏打断"（点脸即停，走 WebSocket，不涉及回声）；
+    语音打断（说话时喊唤醒词）要先解决回声问题，以后再说。
 """
 
 from __future__ import annotations
@@ -16,6 +17,7 @@ from __future__ import annotations
 import argparse
 import platform
 import sys
+import time
 
 from . import __version__
 from .config import CheckItem, Settings
@@ -101,6 +103,35 @@ def _next_step_hint(name: str) -> str:
     return ""
 
 
+def attach_face(settings: Settings, state: StateMachine, synthesizer):
+    """把表情脸接上：状态 -> 广播，音量 -> 口型，点脸 -> 打断。
+
+    返回 None 表示没启用（或 websockets 没装 / 服务起不来）——
+    脸永远是可选件，任何一步失败都不影响语音主流程。
+    键盘模式和语音模式都能用，所以先在 --text 里把脸调通再上语音。
+    """
+    if not settings.face.enabled:
+        return None
+    try:
+        from .face.server import FaceServer
+    except Exception:
+        logger.exception("表情脸模块加载失败，本次不启用")
+        return None
+
+    face = FaceServer(settings.face)
+    face.on_interrupt = synthesizer.interrupt
+    try:
+        face.start()
+    except Exception:
+        logger.exception("表情脸服务启动失败，本次不启用")
+        return None
+
+    state.on_change(lambda old, new: face.publish_state(new.value))
+    synthesizer.speaker.on_level(face.publish_mouth)
+    logger.info("表情脸已接上：状态 -> 广播 | 音量 -> 口型 | 点脸 -> 打断")
+    return face
+
+
 def run_text_mode(settings: Settings) -> None:
     """键盘模式：不用麦克风，直接打字验证"大脑 + 嘴"这一段。"""
     from .llm.client import DeepSeekClient
@@ -115,6 +146,7 @@ def run_text_mode(settings: Settings) -> None:
     client.warmup()
 
     state = StateMachine()
+    face = attach_face(settings, state, synthesizer)
     try:
         while True:
             try:
@@ -130,7 +162,13 @@ def run_text_mode(settings: Settings) -> None:
             state.set(State.THINKING, "键盘输入")
             state.set(State.SPEAKING, "开始回答")
             try:
-                synthesizer.speak_stream(client.stream_reply(text))
+                synthesizer.speak_stream(
+                    client.stream_reply(text),
+                    on_sentence=face.publish_caption if face else None,
+                )
+                if face is not None and face.interrupted():
+                    face.clear_interrupt()
+                    logger.info("被触屏打断")
             except Exception:
                 logger.exception("这一轮处理失败，继续下一轮")
             finally:
@@ -176,6 +214,7 @@ def run_voice_loop(settings: Settings) -> None:
     synthesizer = Synthesizer(settings)
     client = DeepSeekClient(settings, memory=memory)
     detector = WakeWordDetector(settings)
+    face = attach_face(settings, state, synthesizer)
     # 后台把对话连接建好。待机可能几十分钟，连接早被回收了，
     # 不预热的话每次“第一句话”都要多等 1.5 秒。
     client.warmup_async()
@@ -203,10 +242,21 @@ def run_voice_loop(settings: Settings) -> None:
 
                 state.set(State.SPEAKING, "开始回答")
                 try:
-                    synthesizer.speak_stream(client.stream_reply(text))
+                    synthesizer.speak_stream(
+                        client.stream_reply(text),
+                        on_sentence=face.publish_caption if face else None,
+                    )
                 except Exception:
                     logger.exception("回答失败，回到待机")
                     break
+                if face is not None and face.interrupted():
+                    # 触屏打断：声音已经停了，等余音散掉再开麦 ——
+                    # 半双工铁律不能破，麦开早了它会听见自己的回音。
+                    face.clear_interrupt()
+                    logger.info("被触屏打断，停下来听你说")
+                    time.sleep(0.2)
+                    state.set(State.LISTENING, "被打断，继续听")
+                    continue
 
             state.set(State.IDLE, "本轮结束")
     except KeyboardInterrupt:

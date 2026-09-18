@@ -11,6 +11,7 @@
         tts/          文字转语音
         llm/          大模型对话
         memory/       长短期记忆
+        face/         表情脸（S5，WebSocket 协议 + 服务；网页在 face/）
         vision/       视觉（读字 / 认人，后期）
     scripts/          一次性脚本（自检、下模型）
     config/           可编辑的文本配置（唤醒词、性格）
@@ -21,5 +22,5 @@
     tests/            测试
 """
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 __all__ = ["__version__"]
