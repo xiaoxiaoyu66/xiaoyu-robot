@@ -383,15 +383,20 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
     整个标记跟着漏进正文/字幕/历史 —— **逐字喂必现，真 DeepSeek 冒烟也复现过**。
     → 尾巴判定要连"开标记的前缀残片"一起按住（`emotion.py::_holdback_index`），
     回归用例 `tests/test_emotion.py::StreamingHoldbackTest`。
-28. **正常退出被记成"意外退出"**（2026-09-18）。`FaceServer.stop()` 用的是
-    `loop.stop()`，asyncio 会把它报成 `RuntimeError: Event loop stopped before
-    Future completed`，而 `_run()` 的 `except Exception` 一律 `logger.exception`
-    —— 于是**每次正常收摊都往 error.log 写一段假堆栈**。常驻模式（守护反复重启）
-    下这会迅速把 error.log 灌满噪声。
-    → 加 `_stopping` 标志区分"主动停"和"真崩"（`face/server.py`）。
-    顺带记一条**已知无害噪声**：这么停在 stderr 上还会打
-    `Task was destroyed but it is pending!` 之类，**不进 error.log**，
-    只影响退出时控制台/guardian.log 的观感，暂不处理。
+28. **正常退出被记成"意外退出"，还带一串 asyncio 噪声**（2026-09-18）。
+    `FaceServer.stop()` 原本用 `loop.stop()`，两个后果：
+    ① asyncio 把它报成 `RuntimeError: Event loop stopped before Future completed`，
+    而 `_run()` 的 `except Exception` 一律 `logger.exception` —— 于是**每次正常收摊
+    都往 error.log 写一段假堆栈**；② socket 还没关就把循环停了，退出时满屏
+    `Task was destroyed but it is pending!` / `Event loop is closed` /
+    `coroutine 'Server._close' was never awaited`。
+    常驻模式（守护反复重启）下这会迅速把 error.log 灌满噪声，把真故障淹掉。
+    → 改成放行一个 future，让 `serve()` 自己 `server.close()` +
+    `await server.wait_closed()`，收尾再取消残留任务、`shutdown_asyncgens()`、
+    关循环（`face/server.py` 的 `_release_stop()` / `_shutdown_loop()`）。
+    实测：起服务 → `stop()` → error.log 0 字节、stderr 无噪声。
+    **顺手修掉一个假成功**：端口被占时 `start()` 以前照样报"服务已启动"，
+    现在靠 `_bound` 事件如实报错 —— 常驻时不会"脸没了还以为有"。
 
 ---
 

@@ -37,6 +37,11 @@ class FaceServer:
         # "Event loop stopped before Future completed" —— 那是正常路径不是崩溃。
         # 不区分的话每次退出都往 error.log 塞一段假堆栈，真故障会被淹掉。
         self._stopping = threading.Event()
+        # 端口真的监听上了才置位。start() 靠它决定是报"已启动"还是报错 ——
+        # 端口被占时以前会假报成功，常驻模式下等于"脸没了还以为有"。
+        self._bound = threading.Event()
+        # 正常收摊的信号。stop() 放行它，serve() 才会往下走去关服务器。
+        self._stop_requested: asyncio.Future | None = None
         # 收到打断时立刻执行的动作（通常是 synthesizer.interrupt）。
         # 不能等主循环下一轮轮询 —— 一句长话要是等它播完再停就太蠢了。
         self.on_interrupt: Callable[[], None] | None = None
@@ -51,6 +56,13 @@ class FaceServer:
         )
         self._thread.start()
         self._ready.wait(timeout=5)
+        if not self._bound.wait(timeout=5):
+            logger.error(
+                "表情脸没能监听 {}:{}（端口被占？），本次没有脸，语音不受影响",
+                self._config.host,
+                self._config.port,
+            )
+            return
         logger.info(
             "表情脸服务已启动 | 端口 {} | 浏览器打开 face/index.html?token={} "
             "（同一 WiFi 的设备把 localhost 换成本机 IP）",
@@ -63,27 +75,72 @@ class FaceServer:
 
         self._loop = asyncio.new_event_loop()
         asyncio.set_event_loop(self._loop)
+        self._stop_requested = self._loop.create_future()
         self._ready.set()
 
+        # 别用 loop.stop() 收摊：那会让 run_until_complete 抛 RuntimeError，
+        # 而且 socket 都没关就把循环停了，退出时满屏 "Task was destroyed" /
+        # "Event loop is closed"。改成放行一个 future，让 serve() 自己
+        # 关服务器、等它真关上，再让循环自然退出。
         async def serve() -> None:
-            async with websockets.serve(
+            server = await websockets.serve(
                 self._handle, self._config.host, self._config.port
-            ):
-                await asyncio.Future()  # 永远运行，直到 stop()
+            )
+            self._bound.set()
+            try:
+                await self._stop_requested
+            finally:
+                server.close()
+                await server.wait_closed()
 
         try:
             self._loop.run_until_complete(serve())
         except Exception:
             if self._stopping.is_set():
-                # 正常收摊：loop.stop() 的副作用就是这句 RuntimeError
                 logger.debug("表情脸服务已停止")
             else:
                 logger.exception("表情脸服务意外退出")
+        finally:
+            self._shutdown_loop()
+
+    def _shutdown_loop(self) -> None:
+        """把事件循环收干净再关掉。
+
+        Windows 上 Proactor 的 accept 协程不会随 server.close() 一起走，
+        不取消的话退出时就打 "Task was destroyed but it is pending!"。
+        """
+        loop = self._loop
+        if loop is None or loop.is_closed():
+            return
+        try:
+            pending = [t for t in asyncio.all_tasks(loop) if not t.done()]
+            for task in pending:
+                task.cancel()
+            if pending:
+                loop.run_until_complete(
+                    asyncio.gather(*pending, return_exceptions=True)
+                )
+            loop.run_until_complete(loop.shutdown_asyncgens())
+        except Exception:
+            logger.debug("关事件循环时有点小状况，忽略", exc_info=True)
+        finally:
+            loop.close()
 
     def stop(self) -> None:
         self._stopping.set()
-        if self._loop is not None:
-            self._loop.call_soon_threadsafe(self._loop.stop)
+        if self._loop is None:
+            return
+        try:
+            self._loop.call_soon_threadsafe(self._release_stop)
+        except RuntimeError:
+            # 循环已经关了（退出时 stop() 来晚了），没什么可做的
+            logger.debug("事件循环已关闭，表情脸无需再停")
+
+    def _release_stop(self) -> None:
+        """在事件循环线程里放行 serve()。"""
+        fut = self._stop_requested
+        if fut is not None and not fut.done():
+            fut.set_result(None)
 
     # ---------------- 接收（脸 -> 主控） ----------------
 
