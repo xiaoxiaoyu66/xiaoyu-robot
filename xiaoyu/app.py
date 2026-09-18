@@ -409,32 +409,56 @@ def _write_error_log(settings: Settings, reason: str) -> None:
         logger.warning("写 error.log 失败", exc_info=True)
 
 
+# 唤醒事件行的匹配串。格式在 wake/kws.py 里定死，两边要一起改。
+_WAKE_EVENT_PATTERN = r"WAKE_EVENT \| ts=(\d{4}-\d{2}-\d{2}) (\d{2}):"
+
+# 凌晨这几点都算"你多半在睡觉"。半夜自己醒是误唤醒最硬的证据。
+NIGHT_HOURS = frozenset({"00", "01", "02", "03", "04", "05"})
+
+
+def count_wake_events(logs_dir: Path) -> tuple[Counter[str], Counter[str]]:
+    """扫 logs_dir 下的 xiaoyu_*.log，返回（每天唤醒次数, 每天凌晨唤醒次数）。
+
+    纯读文件 + 计数：不打印、不写日志、不联网，好单测。
+    只认 `WAKE_EVENT` 行，不认"听到唤醒词"那行 —— 两者是同一件事的两条日志，
+    都数会翻倍。
+    """
+    import re
+    from collections import Counter
+
+    pattern = re.compile(_WAKE_EVENT_PATTERN)
+    per_day: Counter[str] = Counter()
+    night: Counter[str] = Counter()
+    for path in sorted(logs_dir.glob("xiaoyu_*.log")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            logger.warning("读日志失败，跳过：{}", path.name, exc_info=True)
+            continue
+        for match in pattern.finditer(text):
+            day, hour = match.group(1), match.group(2)
+            per_day[day] += 1
+            if hour in NIGHT_HOURS:
+                night[day] += 1
+    return per_day, night
+
+
 def wake_report(settings: Settings) -> int:
     """误唤醒率有数（S5.5）：统计日志里的唤醒事件，按天列出次数。
 
     用法：python -m xiaoyu --wake-report
-    阈值合不合适不靠感觉：夜里没人说话的日子应该是 0 次，
-    超过 1 次/天就调高 XIAOYU_KWS 阈值（config.py keywords_threshold）。
-    """
-    import re
-    from collections import Counter
-    from pathlib import Path
+    阈值合不合适不靠感觉：没人说话的日子应该接近 0 次，
+    超过 3 次/天就调高 config/keywords.txt 里的阈值。
 
-    pattern = re.compile(r"WAKE_EVENT \| ts=(\d{4}-\d{2}-\d{2})")
-    per_day: Counter[str] = Counter()
+    单独把"凌晨 0~6 点"拎出来，是因为那是最硬的证据 ——
+    那时候你多半在睡觉，它醒了就是纯误唤醒，不用跟"我喊的"混在一起算。
+    """
+    from collections import Counter
+
     logs_dir: Path = settings.paths.logs
-    files = sorted(logs_dir.glob("xiaoyu_*.log"))
-    if not files:
-        logger.warning("日志目录里没有 xiaoyu_*.log：{}", logs_dir)
-        return 1
-    for path in files:
-        try:
-            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
-                match = pattern.search(line)
-                if match:
-                    per_day[match.group(1)] += 1
-        except OSError:
-            logger.warning("读日志失败，跳过：{}", path.name, exc_info=True)
+    per_day: Counter[str]
+    night: Counter[str]
+    per_day, night = count_wake_events(logs_dir)
 
     if not per_day:
         logger.info("日志里还没有唤醒事件（WAKE_EVENT）。先正常跑一天再来。")
@@ -443,8 +467,11 @@ def wake_report(settings: Settings) -> int:
     for day in sorted(per_day):
         count = per_day[day]
         note = "  偏高：考虑调高唤醒阈值" if count > 3 else ""
-        logger.info("{}  唤醒 {} 次{}", day, count, note)
-    logger.info("判断标准：没人说话的日子应该接近 0；持续 >3 次/天就调阈值。")
+        logger.info(
+            "{}  唤醒 {} 次（其中凌晨 0~6 点 {} 次）{}",
+            day, count, night.get(day, 0), note,
+        )
+    logger.info("判断标准：没人说话的日子应该接近 0；凌晨次数应该长期是 0；持续 >3 次/天就调阈值。")
     return 0
 
 

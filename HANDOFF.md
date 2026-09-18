@@ -7,7 +7,7 @@
 > 尤其是"待办"和"现状"两节，过期的交接文档比没有更糟。
 >
 > 最后更新：2026-09-18 深夜（S5.5 常驻自愈 + 情绪系统 + 4c 向量检索完成；
-> 全量 230 个测试全绿、两种跑法数字一致；修掉「测试污染生产日志」和「情绪标记漏进正文」两个坑）
+> 全量 234 个测试全绿、两种跑法数字一致；修掉「测试污染生产日志」和「情绪标记漏进正文」两个坑）
 
 ---
 
@@ -39,7 +39,7 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ——摄像头读人头位置，待机/听话时它的眼睛盯着你看。
 （原文这里写「全量 213 个测试全绿」，那个数**对不上**：当时 `unittest discover tests`
 只收得到 204 个 —— `tests/test_gaze.py` / `test_emotion.py` / `test_memory_recall.py`
-是 pytest 风格、压根没进闸门。已全部改写成 unittest 风格，现在两种跑法都是 230 个。）
+是 pytest 风格、压根没进闸门。已全部改写成 unittest 风格，现在两种跑法都是 234 个。）
 
 **2026-09-18 还动了两个"外围"但影响体感的东西**：
 
@@ -110,8 +110,8 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 230 个，全过）
-python -m pytest tests                   # 同一批用例，数字必须一致（也是 230）
+python -m unittest discover tests        # 跑测试（当前 234 个，全过）
+python -m pytest tests                   # 同一批用例，数字必须一致（也是 234）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --wake-report           # 按天统计唤醒次数（误唤醒率有数，S5.5）
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
@@ -181,7 +181,7 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
 - **4c 向量检索：代码完成 + 真编码验证**（2026-09-18）。
   真 fastembed 实测：问「他叫什么名字」→ 主人叫小林、「猫是什么颜色的」→ 橘猫、
   「他在忙什么」→ 正在准备考研，都对。**按判定停手，不再加深**（理由见 §6.1 P2）。
-- **测试 198 → 230 个全过，且两种跑法数字一致**
+- **测试 198 → 234 个全过，且两种跑法数字一致**
   （`python -m unittest discover tests` 和 `python -m pytest tests` 都是 230）。
   原先 `tests/test_gaze.py` / `test_emotion.py` / `test_memory_recall.py` 是 pytest 风格的
   孤儿、根本没进闸门，已改写成 unittest 风格并补了流式回归用例。
@@ -770,7 +770,8 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
    守护循环挂了 5 秒自己爬起来，日志写 `logs\guardian.log`。
    还剩一步只能手点：Windows 更新 → 高级选项 → 使用时段（脚本会把步骤打出来）。
 4. **误唤醒率有数**：唤醒时打一行 `WAKE_EVENT | ts=... | keyword=...`，
-   `python -m xiaoyu --wake-report` 按天统计，>3 次/天就提示调阈值。
+   `python -m xiaoyu --wake-report` 按天统计，并把**凌晨 0~6 点**单独拎出来
+   （那时候你多半在睡觉，它醒了就是纯误唤醒）；>3 次/天就提示调阈值。
 
 **顺带查到的事**：`logs\` 里翻到旧唤醒词（小宇）有
 **6 次唤醒挤在 0.8 秒内**的记录 —— 换「小柚子」就是冲这个去的。
