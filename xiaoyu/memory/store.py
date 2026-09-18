@@ -119,6 +119,34 @@ class MemoryStore:
         self._conn.commit()
         logger.info("记住一件事：{}", content)
 
+    def add_facts(self, contents: list[str]) -> int:
+        """一次存多条，返回真正写进去的条数（去空、去重）。
+
+        为什么要去重：模型偶尔会把同一条事实拆成两条相似的输出，
+        库里出现"主人喜欢猫"和"主人养了猫"这种近乎重复的条目，
+        注入提示词时只会白占位置。
+        """
+        cleaned: list[str] = []
+        seen: set[str] = set()
+        for raw in contents:
+            text = (raw or "").strip()
+            if not text or text in seen:
+                continue
+            seen.add(text)
+            cleaned.append(text)
+
+        if not cleaned:
+            return 0
+
+        self._conn.executemany(
+            "INSERT INTO facts(content, created_at) VALUES (?, ?)",
+            [(text, _now()) for text in cleaned],
+        )
+        self._conn.commit()
+        for text in cleaned:
+            logger.info("记住一件事：{}", text)
+        return len(cleaned)
+
     # ------------------------------------------------------------------
     # 读取
     # ------------------------------------------------------------------
@@ -145,6 +173,18 @@ class MemoryStore:
             "SELECT created_at FROM messages ORDER BY id DESC LIMIT 1"
         ).fetchone()
         return str(row["created_at"]) if row else None
+
+    def facts_with_id(self, limit: int = 50) -> list[dict[str, object]]:
+        """已有的事实，带 id，按 id 正序（老的在前）。
+
+        为什么要把 id 一并给模型：判重的时候，让模型直接说
+        "这条和 id=3 重复"，比让它自己比对两段文字靠谱得多 ——
+        而且出问题时我们能顺着 id 回查它到底在跟哪条比。
+        """
+        rows = self._conn.execute(
+            "SELECT id, content FROM facts ORDER BY id DESC LIMIT ?", (limit,)
+        ).fetchall()
+        return [{"id": int(r["id"]), "content": str(r["content"])} for r in reversed(rows)]
 
     def recent_facts(self, limit: int = 10) -> list[str]:
         rows = self._conn.execute(

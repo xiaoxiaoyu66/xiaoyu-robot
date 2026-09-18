@@ -227,6 +227,7 @@ class LlmConfig:
 
 @dataclass(frozen=True)
 class MemoryConfig:
+    # 两个都能在 .env 里覆盖：XIAOYU_MEMORY_TOP_K / XIAOYU_MEMORY_SUMMARIZE_EVERY
     top_k: int = 3                    # 每轮检索几条相关记忆
     summarize_every: int = 20         # 每多少轮总结一次"关于主人的事实"
     model_name: str = "BAAI/bge-small-zh-v1.5"
@@ -270,6 +271,11 @@ class Settings:
                 num_threads=_env_int("XIAOYU_TTS_THREADS") or 2,
             ),
             llm=LlmConfig(api_key=_read_secret("DEEPSEEK_API_KEY")),
+            memory=MemoryConfig(
+                top_k=_env_int("XIAOYU_MEMORY_TOP_K") or 3,
+                # 调试"事实积累"时把它调小（比如 3），聊几轮就能看到效果
+                summarize_every=_env_int("XIAOYU_MEMORY_SUMMARIZE_EVERY") or 20,
+            ),
         )
         settings.paths.ensure_dirs()
         logger.info(

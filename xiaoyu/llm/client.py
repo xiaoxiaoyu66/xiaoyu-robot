@@ -1,17 +1,21 @@
 """大模型对话：DeepSeek 流式接口。
 
-四个关键设计：
+五个关键设计：
     1. 流式 + 按句切分（切分逻辑在 xiaoyu/text.py）。
        回答一出句号就送去合成，不等整段生成完，
        这样首句才能在 2.5 秒内出声。
     2. 性格写在 config/persona.md 里，改人格不用动代码。
     3. 启动时把上次的对话从 SQLite 读回来（4a）——
        数据一直都在库里，以前只是没人读回去。
-    4. 有连接预热。慢的那 1.5 秒全在建 TCP + TLS，不在"想得久"。
+    4. 每聊够 N 轮，后台把"关于主人的事实"抽出来存进 facts 表（4b）。
+       判重时把已有事实**连 id 一起**给模型，让它直接说"这条跟 id=3 重复"，
+       比拿两段文字做字符串比对可靠得多。
+    5. 有连接预热。慢的那 1.5 秒全在建 TCP + TLS，不在"想得久"。
 """
 
 from __future__ import annotations
 
+import json
 import threading
 import time
 from collections.abc import Iterator
@@ -31,7 +35,7 @@ _WARMUP_PROMPT = "在吗"
 # 多打的每一次都是白花的钱。
 _WARMUP_REUSE_SECONDS = 60.0
 
-_FALLBACK_PERSONA = "你是小宇，一台放在书桌上的陪伴机器人。说话简短、自然，像朋友聊天。"
+_FALLBACK_PERSONA = "你是小柚子，一台放在书桌上的陪伴机器人。说话简短、自然，像朋友聊天。"
 
 # 认得出原因时说哪句。说不出原因就当它是真 bug，交给上层记堆栈。
 _DEGRADED_AUTH = "等等，我的钥匙好像不对，让主人看一眼配置。"
@@ -93,6 +97,75 @@ def _trim_dangling(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     return cleaned
 
 
+# 让模型整理事实时用的提示词。两个要点：
+#   1. 明确"什么值得记、什么不值得"，否则它会把"今天天气不错"也记下来
+#   2. 判重要求它**按意思**判，不是按字面 —— 不然"主人养了猫"和"主人有只猫"会各记一条
+_SUMMARY_SYSTEM = """你在帮一台陪伴机器人整理它对主人的长期记忆。
+
+从下面的对话里挑出**关于主人、以后还用得上**的事实，整理成短句。
+
+值得记（长期有效）：
+- 名字、称呼、住在哪、职业或学业状态
+- 长期的习惯和偏好（几点睡、爱吃什么、讨厌什么）
+- 正在经历的重要事情（考研、换工作、养了宠物、搬家）
+- 他明确让你记住的事
+
+不值得记（一次性的）：
+- 天气、寒暄、当天的情绪起伏
+- 你推测出来但他没说过的东西
+
+已经记住的在下面给你了（带编号）。只输出**新的、和它们意思不重复的**，
+哪怕措辞不一样，只要说的是同一件事就算重复。
+
+只输出一个 JSON 对象，不要任何解释、不要代码块围栏：
+{"new_facts": ["...", "..."], "duplicates": ["..."]}
+
+new_facts 最多 3 条，每条不超过 30 个字。没有新的就两个都输出空数组。"""
+
+
+def _parse_facts(raw: str) -> tuple[list[str], list[str]]:
+    """从模型的回复里抠出 (新事实, 判为重复的)。
+
+    模型答应只吐 JSON，但它偶尔会套一层 ```json 围栏，或前面多一句客套话。
+    所以不强求整段合法：先剥围栏，再截第一个 { 到最后一个 }。
+    还是解析不出来就当这轮没整理出东西 —— 记忆是加分项，
+    绝不能因为它把正常对话带崩。
+    """
+    if not raw:
+        return [], []
+
+    def _clean(values: object) -> list[str]:
+        out: list[str] = []
+        for item in values if isinstance(values, list) else []:
+            if isinstance(item, dict):
+                item = item.get("text") or item.get("content") or ""
+            text = str(item).strip()
+            if text:
+                out.append(text)
+        return out
+
+    text = raw.strip()
+    if text.startswith("```"):
+        text = text.split("\n", 1)[-1] if "\n" in text else text
+        text = text.rsplit("```", 1)[0]
+
+    start, end = text.find("{"), text.rfind("}")
+    if start == -1 or end <= start:
+        logger.debug("整理记忆：回复里找不到 JSON，跳过（原文前 60 字：{}）", raw[:60])
+        return [], []
+
+    try:
+        data = json.loads(text[start : end + 1])
+    except json.JSONDecodeError:
+        logger.debug("整理记忆：JSON 解析失败，跳过（原文前 60 字：{}）", raw[:60])
+        return [], []
+
+    if not isinstance(data, dict):
+        return [], []
+
+    return _clean(data.get("new_facts")), _clean(data.get("duplicates"))
+
+
 class DeepSeekClient:
     """带上下文和记忆的对话客户端。"""
 
@@ -120,6 +193,9 @@ class DeepSeekClient:
         self._warmup_lock = threading.Lock()
         self._warmup_running = False
         self._warmed_at = 0.0
+        # 4b：距上次整理"关于主人的事实"已经聊了多少轮
+        self._rounds_since_summary = 0
+        self._summary_running = False
         logger.info(
             "对话模型就绪 | 模型={} | 性格提示词 {} 字",
             self._cfg.model,
@@ -294,6 +370,110 @@ class DeepSeekClient:
         threading.Thread(target=run, name="xiaoyu-llm-warmup", daemon=True).start()
         return True
 
+    # ------------------------------------------------------ 4b：事实积累
+
+    def summarize_facts(self, force: bool = False) -> list[str]:
+        """从最近的对话里提炼"关于主人"的事实，去重后存进记忆库。
+
+        为什么需要它：`facts` 表和 `add_fact()` 从第一天就写好了，
+        但**一个调用方都没有** —— 所以"它记得你是谁"这件事从来没发生过。
+        4a 让它记得"聊过什么"，这一步才让它记得"你是谁"。
+
+        为什么用非流式、为什么允许失败：这是对话之外的整理活儿，
+        不用边说边出。任何一步出错都只记日志，绝不影响正常聊天 ——
+        记忆是加分项，不是主流程。
+
+        force=True 时无视轮数直接整理（调试和脚本用）。
+        """
+        if self._memory is None:
+            return []
+
+        every = max(self.settings.memory.summarize_every, 1)
+        if not force and self._rounds_since_summary < every:
+            return []
+        self._rounds_since_summary = 0
+
+        try:
+            known = self._memory.facts_with_id(50)
+            transcript = self._memory.recent_messages(every * 2 + 10, include_time=True)
+        except Exception:
+            logger.exception("整理记忆：读记忆库失败，跳过")
+            return []
+
+        if not transcript:
+            return []
+
+        known_text = (
+            "\n".join(f"{row['id']}. {row['content']}" for row in known)
+            if known
+            else "（还没有记过任何事）"
+        )
+        lines = [
+            f"[{row.get('created_at', '')}] "
+            f"{'主人' if row.get('role') == 'user' else '小柚子'}：{row.get('content', '')}"
+            for row in transcript
+        ]
+
+        try:
+            resp = self._client.chat.completions.create(
+                model=self._cfg.model,
+                messages=[
+                    {"role": "system", "content": _SUMMARY_SYSTEM},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"已经记住的事实：\n{known_text}\n\n"
+                            "最近的对话：\n" + "\n".join(lines) + "\n\n"
+                            "请按约定的 JSON 格式输出。"
+                        ),
+                    },
+                ],
+                temperature=0.0,
+                stream=False,
+            )
+            raw = resp.choices[0].message.content or ""
+        except Exception:
+            logger.exception("整理记忆失败，本轮跳过（不影响对话）")
+            return []
+
+        new_facts, duplicates = _parse_facts(raw)
+        if duplicates:
+            logger.info("整理记忆：判出 {} 条与已有事实重复，已跳过", len(duplicates))
+        if not new_facts:
+            logger.debug("整理记忆：这一轮没有新事实")
+            return []
+
+        try:
+            saved = self._memory.add_facts(new_facts)
+        except Exception:
+            logger.exception("整理记忆：写入事实失败")
+            return []
+
+        logger.info("整理记忆：新增 {} 条关于主人的事实", saved)
+        return new_facts
+
+    def summarize_facts_async(self) -> bool:
+        """聊够 N 轮时在后台整理一次事实。返回是否真的起了线程。
+
+        为什么丢后台：这一步要再调一次大模型（1~3 秒）。
+        同步做的话，用户会看到"它话都说完了却卡着不动"。
+        """
+        if self._memory is None or self._summary_running:
+            return False
+        if self._rounds_since_summary < max(self.settings.memory.summarize_every, 1):
+            return False
+
+        self._summary_running = True
+
+        def run() -> None:
+            try:
+                self.summarize_facts()
+            finally:
+                self._summary_running = False
+
+        threading.Thread(target=run, name="xiaoyu-memory-summary", daemon=True).start()
+        return True
+
     def stream_reply(self, user_text: str) -> Iterator[str]:
         """流式对话，逐句 yield（可以直接喂给 speaker）。"""
         user_text = sanitize(user_text).strip()
@@ -348,10 +528,13 @@ class DeepSeekClient:
             if reply and completed:
                 self._history.append({"role": "user", "content": user_text})
                 self._history.append({"role": "assistant", "content": reply})
-                logger.info("小宇说：{}", reply)
+                logger.info("小柚子说：{}", reply)
                 if self._memory is not None:
                     try:
                         self._memory.remember_exchange(user_text, reply)
+                        self._rounds_since_summary += 1
+                        # 聊够 N 轮就让它在后台整理一次"关于主人的事实"（4b）
+                        self.summarize_facts_async()
                     except Exception:
                         logger.exception("写入记忆失败")
             elif reply:
