@@ -246,7 +246,7 @@ function draw() {
   const gazeFresh = (state === "idle" || state === "listening") &&
                     Date.now() - gazeAt < GAZE_TTL;
   if (gazeFresh) {
-    lookTargetX = gazeX * 26;    // 人在画面左 -> 眼往左瞟
+    lookTargetX = gazeX * 26;    // gaze.x 已经是"该往屏幕哪边看"（+ = 右边），直接用
     lookTargetY = -gazeY * 16;   // 画面上方是正 y，屏幕偏移向上是负
   } else if (state === "idle" && --nextLook <= 0) {
     // 待机时眼睛四处看（Vector 的招牌动作）

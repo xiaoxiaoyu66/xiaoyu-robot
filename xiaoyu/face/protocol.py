@@ -5,7 +5,7 @@
     {"type": "state",   "state": "idle"}        # idle / listening / thinking / speaking / error
     {"type": "mouth",   "level": 0.37}          # 播放音量包络，约 50ms 一帧，口型跟随
     {"type": "caption", "text": "今天也要加油"}  # 正在说的这句话（字幕）
-    {"type": "gaze",    "x": -0.4, "y": 0.2}    # 眼睛跟随（S6a）：人往哪，眼往哪，x/y ∈ [-1,1]
+    {"type": "gaze",    "x": -0.4, "y": 0.2}    # 眼睛跟随（S6a）：x>0 = 人在屏幕右边，y>0 = 抬头
     {"type": "emotion", "mood": "happy", "intensity": 0.8}
                                                 # 情绪系统：happy/sad/angry/surprised/neutral
 

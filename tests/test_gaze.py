@@ -17,9 +17,17 @@ class GazeMathTest(unittest.TestCase):
     def test_center_face_looks_straight(self):
         self.assertEqual(face_to_gaze(320, 240, 640, 480), (0.0, 0.0))
 
-    def test_face_on_left_looks_left(self):
+    def test_nose_on_frame_left_means_person_is_on_screen_right(self):
+        """方向锁（2026-09-18 真人实测定的结论，别改回去）。
+
+        鼻尖出现在画面的**左边**，说明人实际在摄像头的**右边**
+        （摄像头拍的是未镜像画面）—— 而脸是朝着人画的，所以眼睛该往
+        **你看到的屏幕右边**偏，即 gaze.x 必须为**正**。
+
+        改之前这里断言的是 -0.5，症状正是用户报的「人往右移，眼睛却往左看」。
+        """
         x, y = face_to_gaze(160, 240, 640, 480)
-        self.assertEqual(x, -0.5)
+        self.assertEqual(x, 0.5)
         self.assertEqual(y, 0.0)
 
     def test_face_above_looks_up(self):
@@ -29,9 +37,10 @@ class GazeMathTest(unittest.TestCase):
         self.assertEqual(y, 0.5)
 
     def test_gaze_clamped_to_unit_square(self):
-        # 鼻尖在画面左下 -> (-1, -1)；右上 -> (1, 1)
-        self.assertEqual(face_to_gaze(-100, 9999, 640, 480), (-1.0, -1.0))
-        self.assertEqual(face_to_gaze(9999, -100, 640, 480), (1.0, 1.0))
+        # 鼻尖跑到画面极左（人实际在屏幕极右）-> x 顶到 +1；画面极下 -> y 顶到 -1
+        self.assertEqual(face_to_gaze(-100, 9999, 640, 480), (1.0, -1.0))
+        # 画面极右（人实际在屏幕极左）-> x 顶到 -1；画面极上 -> y 顶到 +1
+        self.assertEqual(face_to_gaze(9999, -100, 640, 480), (-1.0, 1.0))
 
     def test_zero_frame_returns_origin(self):
         self.assertEqual(face_to_gaze(10, 10, 0, 0), (0.0, 0.0))
