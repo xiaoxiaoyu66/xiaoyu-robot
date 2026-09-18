@@ -138,6 +138,40 @@ class ConsoleFaceTest(unittest.TestCase):
         face.on_caption("   ")
         self.assertEqual(len(face._levels), 1)   # 空字幕不清空缓冲
 
+    # ---- 情绪行（用户 2026-09-18："看着日志不知道触发了没"）----
+
+    def _capture(self, fn):
+        """把 loguru 的输出抓下来：on_emotion 的产出就是一行日志。"""
+        from loguru import logger as raw_logger
+
+        lines: list[str] = []
+        sink = raw_logger.add(lambda m: lines.append(m), level="INFO", format="{message}")
+        try:
+            fn()
+        finally:
+            raw_logger.remove(sink)
+        return lines
+
+    def test_emotion_writes_a_visible_line(self):
+        """情绪必须能在终端里看见 —— 只在浏览器里变，调试时就变成
+        "到底触发了没有"的扯皮。"""
+        lines = self._capture(lambda: ConsoleFace().on_emotion("happy", 0.9))
+        self.assertTrue(any("开心" in line for line in lines), lines)
+
+    def test_emotion_line_shows_intensity(self):
+        lines = self._capture(lambda: ConsoleFace().on_emotion("angry", 0.6))
+        self.assertTrue(any("0.6" in line for line in lines), lines)
+
+    def test_neutral_still_prints(self):
+        """neutral 也照打：不打的话分不清"没触发"和"触发了但它是平静的"。"""
+        lines = self._capture(lambda: ConsoleFace().on_emotion("neutral", 0.5))
+        self.assertTrue(any("平静" in line for line in lines), lines)
+
+    def test_unknown_mood_falls_back_instead_of_raising(self):
+        """主控发来不认识的情绪也不能炸 —— 脸是消费端。"""
+        lines = self._capture(lambda: ConsoleFace().on_emotion("暴躁", 1.0))
+        self.assertTrue(any("平静" in line for line in lines), lines)
+
 
 if __name__ == "__main__":
     unittest.main()

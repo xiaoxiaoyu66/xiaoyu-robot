@@ -29,6 +29,15 @@ _FACES = {
     "error": "(x_x) 出错了",
 }
 
+# 情绪 -> 字符画。全 ASCII，不赌终端的 emoji 渲染。
+_MOODS = {
+    "happy": "(^_^) 开心",
+    "sad": "(;_;) 难过",
+    "angry": "(>_<) 生气",
+    "surprised": "(o_o) 惊讶",
+    "neutral": "(-_-) 平静",
+}
+
 _BAR = "▁▂▃▄▅▆▇█"
 _SAMPLES = 8
 
@@ -60,6 +69,15 @@ class ConsoleFace:
         face = _FACES.get(new.value)
         if face:
             logger.info("脸 | {}", face)
+
+    def on_emotion(self, mood: str, intensity: float) -> None:
+        """情绪同样要能在终端里看见。
+
+        浏览器脸是主力，但调试时人盯着终端 —— 情绪只在浏览器里变，
+        终端一点痕迹没有，就会变成"到底触发了没有"的扯皮。
+        neutral 也照打：不打的话，人分不清"没触发"和"触发了但是平静"。
+        """
+        logger.info("心情 | {} · 强度 {:.1f}", _MOODS.get(mood, _MOODS["neutral"]), intensity)
 
     def on_level(self, level: float) -> None:
         # 只收集正音量；播放器每句结束会推一个 0，正好当句子边界

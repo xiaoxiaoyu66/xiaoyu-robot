@@ -63,6 +63,16 @@ def split_visible(text: str) -> tuple[str, str]:
     return visible[:index], visible[index:]
 
 
+def has_emotion_mark(text: str) -> bool:
+    """文本里有没有**完整**的情绪标记。
+
+    给日志用的。模型有时候就是不给标记（短回复尤其常见），那是正常的，
+    不该和"给了但值不认识"混为一谈 —— 以前两者都静默归成 neutral，
+    日志里看不出任何区别，人在终端前只能干着急（用户 2026-09-18 就卡在这）。
+    """
+    return _MARK_RE.search(text) is not None
+
+
 def parse_emotion(text: str) -> tuple[str, float]:
     """从（可能含标记的）文本里解析出 (mood, intensity)。
 

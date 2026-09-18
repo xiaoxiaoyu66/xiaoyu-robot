@@ -9,7 +9,7 @@ from __future__ import annotations
 import unittest
 
 from xiaoyu.face import protocol
-from xiaoyu.llm.emotion import parse_emotion, split_visible
+from xiaoyu.llm.emotion import has_emotion_mark, parse_emotion, split_visible
 
 
 class SplitVisibleTest(unittest.TestCase):
@@ -35,6 +35,27 @@ class SplitVisibleTest(unittest.TestCase):
         visible, hold = split_visible("就是一句普通的话。")
         self.assertEqual(visible, "就是一句普通的话。")
         self.assertEqual(hold, "")
+
+
+class HasEmotionMarkTest(unittest.TestCase):
+    """日志靠它区分"模型没给标记"和"给了没走到脸" —— 别看错。"""
+
+    def test_complete_mark_detected(self):
+        self.assertTrue(has_emotion_mark("好开心！[emotion]happy,0.8[/emotion]"))
+
+    def test_plain_text_has_none(self):
+        self.assertFalse(has_emotion_mark("就是一句普通的话。"))
+
+    def test_half_mark_is_not_a_mark(self):
+        # 流式里的半个标记不算 —— 它可能永远长不完整
+        self.assertFalse(has_emotion_mark("好呀！[emotion]hap"))
+
+    def test_garbage_value_still_counts_as_a_mark(self):
+        # 标记在、值不认识：算"模型给了"，只是解析回落到 neutral。
+        # 这两件事在日志里必须分得开。
+        text = "[emotion]哈哈哈,1[/emotion]"
+        self.assertTrue(has_emotion_mark(text))
+        self.assertEqual(parse_emotion(text), ("neutral", 0.5))
 
 
 class ParseEmotionTest(unittest.TestCase):

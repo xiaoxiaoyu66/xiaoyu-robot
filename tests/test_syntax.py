@@ -19,9 +19,13 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 
+# .scratch 是记了 gitignore 的草稿区（冒烟脚本、一次性探针），
+# 不该让一个写了一半的实验文件把整个项目卡红。
+# 真实案例：验证情绪回调时在里面留了个 app.py 的备份副本，
+# 它自己的 DeprecationWarning 就跑进了测试输出里，看着像生产代码在告警。
 SKIP_DIRS = {
     ".git", ".venv", "venv", "__pycache__", "node_modules",
-    "models", "data", "logs",
+    "models", "data", "logs", ".scratch", ".pytest_cache",
 }
 
 

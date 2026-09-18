@@ -24,7 +24,7 @@ from datetime import datetime
 from ..config import Settings
 from ..logger import get_logger
 from ..text import describe_last_seen, describe_now, read_text, sanitize, split_sentences
-from .emotion import parse_emotion, split_visible
+from .emotion import has_emotion_mark, parse_emotion, split_visible
 
 logger = get_logger(__name__)
 
@@ -48,6 +48,20 @@ _EMOTION_INSTRUCTION = (
 )
 
 # 认得出原因时说哪句。说不出原因就当它是真 bug，交给上层记堆栈。
+# 情绪标记的"临门提醒"。
+#
+# 为什么非要有：历史里存的都是**剥掉标记之后**的旧回复，于是模型看到的
+# 自己那 20 条过去全是不带标记的样子 —— 它会照着学，把 system 里那条格式
+# 要求悄悄丢掉。实测（2026-09-18）：新客户端无历史 3/3 带标记，
+# 恢复真实 20 条历史后 **0/3**。
+# 要求写在 system 开头是会被后面几十条反例冲淡的，所以必须在**离生成最近**
+# 的位置再提一次。这不是措辞问题，是位置问题。
+_EMOTION_REMINDER = (
+    "提醒：这轮回复的最后必须带一个情绪标记，格式 [emotion]情绪,强度[/emotion]，"
+    "情绪只能是 happy / sad / angry / surprised / neutral，强度是 0~1 的小数。"
+    "正文里不要出现它。（上面历史里的回复漏掉了这个标记，不用照着学。）"
+)
+
 _DEGRADED_AUTH = "等等，我的钥匙好像不对，让主人看一眼配置。"
 _DEGRADED_MONEY = "我这边欠费了，充点钱我就能接着聊。"
 _DEGRADED_NETWORK = "我这会儿连不上脑子了，等一下再喊我。"
@@ -328,6 +342,11 @@ class DeepSeekClient:
                 )
 
         messages.extend(self._history[-self._cfg.max_history :])
+
+        # 临门提醒：放在历史之后、用户这句之前 —— 离生成最近的位置。
+        # 见 _EMOTION_REMINDER 上的实测数据：不提醒就只有 0/3 带标记。
+        messages.append({"role": "system", "content": _EMOTION_REMINDER})
+
         messages.append({"role": "user", "content": user_text})
         return messages
 
@@ -560,8 +579,18 @@ class DeepSeekClient:
                 yield buffer.strip()
             completed = True
 
-            mood, intensity = parse_emotion("".join(raw_parts))
+            raw_reply = "".join(raw_parts)
+            mood, intensity = parse_emotion(raw_reply)
             self._last_emotion = (mood, intensity)
+
+            # 情绪是"隐形"的 —— 它只在脸上看得见，终端里什么痕迹都没有。
+            # 不写日志的话，用户在日志里根本分不清是"模型没给标记"还是
+            # "给了没走到脸"，只能干着急（2026-09-18 实测就卡在这）。
+            if has_emotion_mark(raw_reply):
+                logger.info("情绪：{}（强度 {:.2f}）-> 已发给表情脸", mood, intensity)
+            else:
+                logger.info("这一轮模型没给情绪标记，按 neutral 处理（脸不变表情）")
+
             if on_emotion is not None:
                 try:
                     on_emotion(mood, intensity)

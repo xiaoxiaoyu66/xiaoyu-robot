@@ -190,7 +190,7 @@ def _fanout(label: str, *handlers):
     情绪接进来的时候直接
         TypeError: emit() takes 1 positional argument but 2 were given
     —— 而且被 stream_reply 兜住了（情绪是表演，不能带崩对话），
-    只在 logs\error.log 留一行。表现是"聊天一切正常，就是脸永远不变表情"，
+    只在 logs\\error.log 留一行。表现是"聊天一切正常，就是脸永远不变表情"，
     极难自己发现。回归测试见 tests/test_emotion_wiring.py。
     """
     handlers = [h for h in handlers if h is not None]
@@ -219,7 +219,11 @@ def build_callbacks(face, console_face=None):
         face.publish_caption if face else None,
         console_face.on_caption if console_face else None,
     )
-    on_emotion = _fanout("情绪", face.publish_emotion if face else None)
+    on_emotion = _fanout(
+        "情绪",
+        face.publish_emotion if face else None,
+        console_face.on_emotion if console_face else None,
+    )
     return on_caption, on_emotion
 
 

@@ -130,6 +130,22 @@ class EmotionWiringTest(unittest.TestCase):
         self.assertIn(("emotion", "sad", 0.9), sink)
         self.assertNotIn("[", said)
 
+    def test_console_face_gets_emotion_too(self):
+        """终端脸也要收到情绪 —— 不然调试时盯着终端什么都看不见。"""
+        got = []
+
+        class FakeConsole:
+            def on_caption(self, text: str) -> None:
+                pass
+
+            def on_emotion(self, mood: str, intensity: float) -> None:
+                got.append((mood, intensity))
+
+        _, on_emotion = build_callbacks(_FakeFace([]), FakeConsole())
+        on_emotion("happy", 0.9)
+
+        self.assertEqual(got, [("happy", 0.9)])
+
     def test_no_face_means_no_callbacks(self):
         """脸没开的时候两个回调都是 None，client 那边会自己跳过。"""
         on_caption, on_emotion = build_callbacks(None, None)
@@ -154,6 +170,58 @@ class EmotionWiringTest(unittest.TestCase):
         on_emotion("angry", 0.5)
 
         self.assertEqual(sink, [("angry", 0.5)])
+
+
+class EmotionPromptReminderTest(unittest.TestCase):
+    """情绪标记的要求必须出现在**离生成最近**的位置。
+
+    实测（2026-09-18）：要求只写在 system 开头时，新客户端 3/3 带标记，
+    恢复真实的 20 条历史后变成 **0/3** —— 历史里存的都是剥掉标记的旧回复，
+    模型照着自己的过去学，就把格式要求丢了。
+    在历史之后补一条提醒，才回到 3/3。
+
+    这条链断掉的表现极隐蔽：对话一切正常，只是脸永远不变表情。
+    所以这里锁死的不是措辞，是**位置**。
+    """
+
+    def _client(self) -> DeepSeekClient:
+        return DeepSeekClient(_settings(), memory=None)
+
+    def test_reminder_sits_right_before_the_user_turn(self):
+        client = self._client()
+        client._history = [
+            {"role": "user", "content": "上一句"},
+            {"role": "assistant", "content": "旧回复（没有情绪标记）"},
+        ]
+
+        messages = client._build_messages("新的一句")
+
+        # 用户这句永远是最后一条
+        self.assertEqual(messages[-1]["role"], "user")
+        self.assertEqual(messages[-1]["content"], "新的一句")
+        # 紧挨着它之前，必须有一条点名 [emotion] 的 system 提醒
+        self.assertEqual(messages[-2]["role"], "system")
+        self.assertIn("[emotion]", messages[-2]["content"])
+
+    def test_reminder_comes_after_the_history(self):
+        """提醒不能被历史淹在前面 —— 它得比历史更靠近生成。"""
+        client = self._client()
+        client._history = [
+            {"role": "assistant", "content": f"旧回复 {i}"} for i in range(10)
+        ]
+
+        messages = client._build_messages("新的一句")
+
+        last_history = max(
+            i for i, m in enumerate(messages) if m["content"].startswith("旧回复")
+        )
+        reminder = len(messages) - 2
+        self.assertGreater(reminder, last_history)
+
+    def test_persona_still_carries_the_original_instruction(self):
+        """开头的原要求别被顺手删了 —— 两处都要在。"""
+        client = self._client()
+        self.assertIn("[emotion]", client._persona)
 
 
 if __name__ == "__main__":
