@@ -249,11 +249,20 @@ def status() -> None:
     log = ROOT / "logs" / "guardian.log"
     if log.exists():
         starts = 0
+        crashes = 0
         with log.open("r", encoding="utf-8", errors="backslashreplace") as fh:
             for line in fh:
                 if "guardian: starting" in line:
                     starts += 1
-        print(f"guardian.log 里的启动次数：{starts}（一周内应该一直是 1）")
+                elif "guardian: exited" in line:
+                    crashes += 1
+        # 「启动次数」不是异常信号：每次开机 / 重登录都会 +1。
+        # 真正要盯的是本体中途崩了几次 —— 那才说明有东西坏了。
+        print(f"守护启动次数：{starts}（每次开机 / 重登录 +1，正常）")
+        print(
+            f"本体中途崩溃次数：{crashes}"
+            + ("（正常）" if crashes == 0 else "  <- 异常，去看 logs\\error.log")
+        )
 
     print()
     print(str(info.get("task") or "").strip())
