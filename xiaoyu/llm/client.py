@@ -1,10 +1,13 @@
 """大模型对话：DeepSeek 流式接口。
 
-两个关键设计：
+四个关键设计：
     1. 流式 + 按句切分（切分逻辑在 xiaoyu/text.py）。
        回答一出句号就送去合成，不等整段生成完，
        这样首句才能在 2.5 秒内出声。
     2. 性格写在 config/persona.md 里，改人格不用动代码。
+    3. 启动时把上次的对话从 SQLite 读回来（4a）——
+       数据一直都在库里，以前只是没人读回去。
+    4. 有连接预热。慢的那 1.5 秒全在建 TCP + TLS，不在"想得久"。
 """
 
 from __future__ import annotations
@@ -12,10 +15,11 @@ from __future__ import annotations
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime
 
 from ..config import Settings
 from ..logger import get_logger
-from ..text import read_text, sanitize, split_sentences
+from ..text import describe_last_seen, describe_now, read_text, sanitize, split_sentences
 
 logger = get_logger(__name__)
 
@@ -28,6 +32,65 @@ _WARMUP_PROMPT = "在吗"
 _WARMUP_REUSE_SECONDS = 60.0
 
 _FALLBACK_PERSONA = "你是小宇，一台放在书桌上的陪伴机器人。说话简短、自然，像朋友聊天。"
+
+# 认得出原因时说哪句。说不出原因就当它是真 bug，交给上层记堆栈。
+_DEGRADED_AUTH = "等等，我的钥匙好像不对，让主人看一眼配置。"
+_DEGRADED_MONEY = "我这边欠费了，充点钱我就能接着聊。"
+_DEGRADED_NETWORK = "我这会儿连不上脑子了，等一下再喊我。"
+_DEGRADED_BUSY = "你问得太快了，让我喘口气。"
+
+
+def _speakable_error(exc: BaseException) -> str | None:
+    """把 API 异常翻译成一句能说出口的话。
+
+    为什么值得做：断网、欠费的时候它一声不吭，人会以为它坏了，
+    然后开始怀疑唤醒词、怀疑麦克风、怀疑代码 —— 排查成本全落在主人身上。
+    说一句话，故障就变成了性格。
+    """
+    name = type(exc).__name__.lower()
+    text = f"{name} {exc}".lower()
+
+    if "401" in text or "403" in text or "authentication" in name:
+        return _DEGRADED_AUTH
+    if any(k in text for k in ("402", "insufficient", "balance", "quota", "exceeded")):
+        return _DEGRADED_MONEY
+    if "429" in text or "ratelimit" in name:
+        return _DEGRADED_BUSY
+    if any(
+        k in text
+        for k in (
+            "timeout",
+            "timed out",
+            "timedout",
+            "connection",
+            "connect",
+            "unreachable",
+            "ssl",
+            "proxy",
+            "network",
+        )
+    ):
+        return _DEGRADED_NETWORK
+    return None
+
+
+def _trim_dangling(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    """清掉读回来的历史里"说不通"的收尾。
+
+    两种脏数据：
+        1. 空内容 —— 空消息会让 API 直接报错，整个对话起不来
+        2. 结尾是一条没有回复的 user 消息 —— 上一轮聊到一半程序被关了。
+           留着它，下一句问话就会变成连着两条 user。
+    结尾若是 assistant 消息则保留，那是一个完整回合。
+
+    只丢结尾那一条，不做循环 —— 正常写入永远是"一问一答"成对出现，
+    循环丢弃会在数据异常时把整段历史悄悄清空，那比留着一条脏数据更糟。
+    """
+    cleaned = [row for row in rows if (row.get("content") or "").strip()]
+    if cleaned and cleaned[-1].get("role") == "user":
+        dropped = cleaned.pop().get("content", "")
+        logger.debug("丢掉结尾那条没等到回复的提问：{}", str(dropped)[:20])
+    return cleaned
 
 
 class DeepSeekClient:
@@ -53,6 +116,7 @@ class DeepSeekClient:
         )
         self._persona = self._load_persona()
         self._history: list[dict[str, str]] = []
+        self._last_seen_at: str | None = None
         self._warmup_lock = threading.Lock()
         self._warmup_running = False
         self._warmed_at = 0.0
@@ -61,6 +125,62 @@ class DeepSeekClient:
             self._cfg.model,
             len(self._persona),
         )
+        self._restore_history()
+
+    def _restore_history(self) -> None:
+        """启动时把上次的对话读回来 —— 这就是 S4 的 4a。
+
+        数据一直都在 SQLite 里（`memory/store.py` 从第一天就在写），
+        但以前没有任何人读回来，所以程序一关它就对你一无所知。
+
+        顺带把"上次聊天的时间"记下来（`_last_seen_at`）。
+        必须在**本轮对话开始之前**取，取到的才真的是"上一次"。
+        """
+        if self._memory is None:
+            return
+
+        try:
+            self._last_seen_at = self._memory.last_message_at()
+            rows = self._memory.recent_messages(self._cfg.max_history, include_time=True)
+        except Exception:
+            # 读不回来就退回"仅本次会话记忆" —— 那本来就是以前的行为，不会更糟
+            logger.exception("读回历史失败，这次就从头开始聊")
+            return
+
+        rows = _trim_dangling(rows)
+        self._history.extend(
+            {"role": row["role"], "content": row["content"]} for row in rows
+        )
+
+        if not self._history:
+            logger.info("记忆库里还没有对话，这是第一次聊天")
+            return
+
+        logger.info(
+            "恢复了 {} 条历史消息（最早的是 {}）| 上次聊天：{}",
+            len(self._history),
+            rows[0].get("created_at", "?"),
+            self._last_seen_at or "?",
+        )
+
+    def _time_sense_message(self) -> dict[str, str] | None:
+        """给模型一点时间感，否则它会以为"上次聊天"就是刚刚。
+
+        加上这一段，它才说得出"上次你不是说在忙作业吗"这种话 ——
+        一句话的体感价值远大于它的技术含量。
+
+        时间必须每轮现取。启动时算一次存着的话，聊到晚上它会一直报下午的时间。
+        """
+        now = datetime.now()
+        lines = [f"现在是 {describe_now(now)}。"]
+
+        last = describe_last_seen(self._last_seen_at, now)
+        if last:
+            lines.append(
+                f"你们上一次聊天是{last}。如果提到时间，以这个为准，别以为就是刚才。"
+            )
+
+        return {"role": "system", "content": "".join(lines)}
 
     def _load_persona(self) -> str:
         path = self.settings.paths.persona
@@ -98,6 +218,10 @@ class DeepSeekClient:
                     {"role": "system", "content": f"你记得关于主人的这些事：\n{joined}"}
                 )
                 logger.debug("注入 {} 条记忆", len(memories))
+
+        sense = self._time_sense_message()
+        if sense is not None:
+            messages.append(sense)
 
         messages.extend(self._history[-self._cfg.max_history :])
         messages.append({"role": "user", "content": user_text})
@@ -182,6 +306,7 @@ class DeepSeekClient:
         buffer = ""
         collected: list[str] = []
         first_sentence_logged = False
+        completed = False
 
         try:
             stream = self._client.chat.completions.create(
@@ -208,13 +333,19 @@ class DeepSeekClient:
 
             if buffer.strip():
                 yield buffer.strip()
+            completed = True
 
-        except Exception:
+        except Exception as exc:
             logger.exception("调用大模型失败")
-            raise
+            line = _speakable_error(exc)
+            if line is None:
+                # 认不出来的异常是真 bug，交给上层记堆栈，别用一句好话盖住
+                raise
+            logger.warning("这一轮说不成话，改用兜底的一句：{}", line)
+            yield line
         finally:
             reply = "".join(collected).strip()
-            if reply:
+            if reply and completed:
                 self._history.append({"role": "user", "content": user_text})
                 self._history.append({"role": "assistant", "content": reply})
                 logger.info("小宇说：{}", reply)
@@ -223,3 +354,6 @@ class DeepSeekClient:
                         self._memory.remember_exchange(user_text, reply)
                     except Exception:
                         logger.exception("写入记忆失败")
+            elif reply:
+                # 半截回复一旦进了历史，下次启动读回来就是一句没头没尾的话
+                logger.warning("这一轮没正常说完（{} 字），不写进历史", len(reply))

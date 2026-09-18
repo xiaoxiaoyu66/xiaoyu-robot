@@ -28,6 +28,11 @@
       量延迟用 `python scripts\bench_latency.py`。
 - [x] **语音模式真人验证** —— 喊"小宇"走完一轮，用户原话
       "唤醒词可以了，延迟也没那么明显了"。S1/S2/S3 到此全部通过真人验证。
+- [x] **补上记忆的回归测试** —— 2026-09-18。以前 `MemoryStore` 在 `tests/` 里
+      **一个引用都没有**（grep 零匹配），而 S4 的三个台阶全都要动它。
+      新增 `tests/test_memory.py`（重启后读得回来、备份、facts/recall）
+      和 `tests/test_llm_history.py`（历史读回、时间感、兜底话术）。
+      全套测试 86 → 144 个。
 
 ---
 
@@ -52,20 +57,23 @@
 
 ## 功能
 
-- [ ] **S4 · 重启之后还记得你**（第一件做，改动很小）
-      —— 对话**已经**存在 SQLite 里了（实测 26 条），但 `DeepSeekClient` 启动时
-      `_history` 是空的，从头到尾没人把它读回来。
-      所以关掉程序再开，它对你一无所知：实测发给模型的只有 2 条消息
-      （1 条性格 + 你这句）。接上 `memory.recent_messages()` 就能修好，
-      再加一句"你们上次聊天是昨天 21:30"，体感立刻不一样。
-- [ ] **S4 · 自动总结"关于主人的事实"** —— `facts` 表建好了、`add_fact()` 写好了、
+- [x] **S4 · 重启之后还记得你（4a）** —— 2026-09-18 完成。
+      `DeepSeekClient` 启动时用 `memory.recent_messages(max_history, include_time=True)`
+      把最近的对话读回 `_history`，并在 system 里注入时间感（当前时间 + 上次聊天时间）。
+      实测（真实库）：26 条对话 → 读回 20 条，提示词里出现
+      "现在是 2026-09-18 周五 14:33。你们上一次聊天是昨天 22:04。"
+      顺带做掉三件相关的：读回时丢掉没等到回复的收尾提问、API 失败改说一句人话
+      （`_speakable_error`）、启动时给 `data/xiaoyu.db` 留一份当日备份。
+      **待真人验证**：关程序 → 重开 → 问"我们上次聊了什么"。
+- [ ] **S4 · 自动总结"关于主人的事实"（4b）** —— `facts` 表建好了、`add_fact()` 写好了、
       `recall()` 也接好了，但 **`add_fact()` 一个调用方都没有**，
       所以 facts 永远是 0 条、`recall()` 永远返回空。
       每 20 轮让模型从对话里抽出事实存进去，注意**去重**，别记流水账。
-- [ ] **S4 · 记忆的向量检索** —— `recall()` 现在退化成"最近记得的事实"，
+- [ ] **S4 · 记忆的向量检索（4c，可选）** —— `recall()` 现在退化成"最近记得的事实"，
       要换成 bge-small-zh-v1.5 + 余弦相似度，每轮检索最相关的 3 条注入 prompt。
-      ⚠️ `pip install sentence-transformers` 会拖进 torch（CPU wheel 200MB+），
-      **先量下载时间再决定**；也先花 15 分钟查 sherpa-onnx 有没有自带 embedding 接口。
+      ⚠️ 路线已改（见 v3）：**不引入 torch**，走 fastembed 或 onnxruntime 直接加载 onnx。
+      也先花 15 分钟查 sherpa-onnx 有没有自带 embedding 接口。
+
 - [ ] **S5 · 表情脸** —— Vue3 + Live2D，旧手机浏览器当屏幕，接状态机的 `on_change`。
 - [ ] **S6 · 眼睛** —— RapidOCR 读字、InsightFace 认人，走意图路由（命中"看看/这是谁"才开摄像头）。
 - [ ] **桌面独立成体（搬到 N100）** —— 当前目标，详见 HANDOFF §6.2。
@@ -94,4 +102,9 @@
 
 - 严格**半双工**：说话时不开麦。用外放喇叭时这是必须的，否则它会自己唤醒自己。
 - 唤醒词只支持**中文或英文**，且必须是词表里有的音素（用 `scripts\make_keywords.py` 生成）。
-- `--text` 键盘模式不会写记忆（那是调试用的快捷路径）。
+- `--text` 键盘模式**会写记忆**（和语音模式共用 `data/xiaoyu.db`）。
+  以前 TODO 里写的是"不会写"，那是错的 —— 实测 `run_text_mode` 把 memory 传给了
+  `DeepSeekClient`，而 `stream_reply` 的 finally 无条件调 `remember_exchange()`。
+  行为是有意的（一致、好排查），但要知道：**在键盘模式里调试说的话，
+  会进入语音模式的上下文**。想干净地试，就先备份一份 `data/xiaoyu.db`。
+- 记忆库每天第一次打开会自动备份成 `data/xiaoyu.db.YYYYMMDD.bak`（当天不覆盖）。

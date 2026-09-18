@@ -6,6 +6,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 
 # 句末标点：见到这些就断句送去念
@@ -72,6 +73,82 @@ def clean_for_speech(text: str) -> str:
         if cleaned.startswith(prefix):
             cleaned = cleaned[len(prefix) :].strip()
     return cleaned
+
+
+# ---------- 时间感 ----------
+#
+# 放在这里的理由和 read_text / sanitize 一样：纯函数、零依赖、能单独测。
+# 记忆库里存的是 "YYYY-MM-DD HH:MM:SS" 字符串，要变成"昨天 21:30"
+# 这种能直接塞进提示词的人话。写错一个日期，机器人就会一本正经地胡说八道。
+
+_WEEKDAYS = ("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+# 记忆库里的时间戳格式（memory/store.py 的 _now() 写的就是第一个）
+_TIMESTAMP_FORMATS = ("%Y-%m-%d %H:%M:%S", "%Y-%m-%d %H:%M", "%Y-%m-%d")
+
+
+def parse_timestamp(value: str | None) -> datetime | None:
+    """解析记忆库里的时间戳，认不出来就返回 None（不要抛异常）。"""
+    if not value:
+        return None
+    text = str(value).strip()
+    for fmt in _TIMESTAMP_FORMATS:
+        try:
+            return datetime.strptime(text, fmt)
+        except ValueError:
+            continue
+    return None
+
+
+def describe_now(now: datetime | None = None) -> str:
+    """把"现在"说成人话，例如 2026-09-18 周五 14:19。
+
+    必须每轮现取，不能启动时算一次存着 —— 聊一晚上会一直报错时间。
+    """
+    now = now or datetime.now()
+    return f"{now:%Y-%m-%d} {_WEEKDAYS[now.weekday()]} {now:%H:%M}"
+
+
+def describe_last_seen(value: str | None, now: datetime | None = None) -> str:
+    """把"上次聊天的时间"说成人话。
+
+    为什么值得单独写一个函数：
+        机器人要说出"上次你不是说在忙作业吗"，前提是它知道自己和主人
+        隔了多久没说话。直接甩一个 "2026-09-17 21:30" 给模型，
+        它经常会当成"现在"；说成"昨天 21:30"就稳了。
+
+    解析失败、没传值 —— 一律返回空串，让调用方跳过这一段，
+    绝不能让一个坏时间戳把整轮对话带崩。
+
+    >>> from datetime import datetime
+    >>> describe_last_seen("2026-09-17 21:30:00", datetime(2026, 9, 18, 14, 19))
+    '昨天 21:30'
+    """
+    stamp = parse_timestamp(value)
+    if stamp is None:
+        return ""
+
+    now = now or datetime.now()
+    days = (now.date() - stamp.date()).days
+    clock = stamp.strftime("%H:%M")
+
+    if days < 0:
+        # 时钟被改过（或者数据是未来的），不猜，原样说
+        return stamp.strftime("%Y-%m-%d %H:%M")
+    if days == 0:
+        minutes = int((now - stamp).total_seconds() // 60)
+        if minutes < 2:
+            return "刚才"
+        if minutes < 60:
+            return f"{minutes} 分钟前"
+        return f"今天 {clock}"
+    if days == 1:
+        return f"昨天 {clock}"
+    if days < 7:
+        return f"{days} 天前"
+    if days < 30:
+        return f"大概 {days // 7} 周前"
+    return stamp.strftime("%Y-%m-%d")
 
 # ---------- 编码兜底 ----------
 

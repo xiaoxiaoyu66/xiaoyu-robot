@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import shutil
 import sqlite3
 import time
 from pathlib import Path
@@ -49,6 +50,8 @@ class MemoryStore:
         self.settings = settings
         self._path: Path = settings.paths.db
         self._path.parent.mkdir(parents=True, exist_ok=True)
+        # 先备份，再打开。顺序不能反：打开之后库可能已经被写过了。
+        self._backup_once_a_day()
         self._conn = sqlite3.connect(str(self._path), check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
@@ -58,6 +61,34 @@ class MemoryStore:
             self._path.name,
             self._count("messages"),
             self._count("facts"),
+        )
+
+    def _backup_once_a_day(self) -> None:
+        """每天第一次打开时，把记忆库复制一份。
+
+        S4 之后这个库就是它全部的记忆，硬盘一坏、代码写错一次就永久失忆。
+        一天一份、同名不覆盖 —— 因为"当天的第一份"通常才是干净的那份，
+        同一天再开一次就把它盖掉，正好会把好备份换成坏备份。
+        """
+        if not self._path.exists() or self._path.stat().st_size == 0:
+            return
+
+        target = self._path.with_name(f"{self._path.name}.{_today()}.bak")
+        if target.exists():
+            logger.debug("今天的记忆库备份已存在，不覆盖：{}", target.name)
+            return
+
+        try:
+            shutil.copy2(self._path, target)
+        except OSError:
+            # 备份是保险，不是前提：拷贝失败绝不能让程序起不来
+            logger.warning("记忆库备份失败（不影响使用）：{}", target.name, exc_info=True)
+            return
+
+        logger.info(
+            "已备份记忆库 → {}（{:.0f} KB）",
+            target.name,
+            target.stat().st_size / 1024,
         )
 
     def _count(self, table: str) -> int:
@@ -91,11 +122,29 @@ class MemoryStore:
     # ------------------------------------------------------------------
     # 读取
     # ------------------------------------------------------------------
-    def recent_messages(self, limit: int = 20) -> list[dict[str, str]]:
+    def recent_messages(
+        self, limit: int = 20, include_time: bool = False
+    ) -> list[dict[str, str]]:
+        """最近 N 条对话，按时间正序返回（最早的在前，直接能塞进 prompt）。
+
+        include_time=True 时会多带一个 created_at，供"上次聊天是昨天 21:30"
+        这种时间感使用；默认不带，免得别的调用方被动多出一个字段。
+        """
+        columns = "role, content, created_at" if include_time else "role, content"
         rows = self._conn.execute(
-            "SELECT role, content FROM messages ORDER BY id DESC LIMIT ?", (limit,)
+            f"SELECT {columns} FROM messages ORDER BY id DESC LIMIT ?", (limit,)
         ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in reversed(rows)]
+        return [{key: r[key] for key in r.keys()} for r in reversed(rows)]
+
+    def last_message_at(self) -> str | None:
+        """最后一次对话的时间（不带上限地取最新一条）。空库返回 None。
+
+        要在**本轮对话开始之前**取，取到的才是"上一次聊天"的时间。
+        """
+        row = self._conn.execute(
+            "SELECT created_at FROM messages ORDER BY id DESC LIMIT 1"
+        ).fetchone()
+        return str(row["created_at"]) if row else None
 
     def recent_facts(self, limit: int = 10) -> list[str]:
         rows = self._conn.execute(
@@ -115,3 +164,7 @@ class MemoryStore:
 
 def _now() -> str:
     return time.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _today() -> str:
+    return time.strftime("%Y%m%d")
