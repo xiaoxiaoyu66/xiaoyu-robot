@@ -18,12 +18,13 @@ from __future__ import annotations
 import json
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from datetime import datetime
 
 from ..config import Settings
 from ..logger import get_logger
 from ..text import describe_last_seen, describe_now, read_text, sanitize, split_sentences
+from .emotion import parse_emotion, split_visible
 
 logger = get_logger(__name__)
 
@@ -36,6 +37,15 @@ _WARMUP_PROMPT = "在吗"
 _WARMUP_REUSE_SECONDS = 60.0
 
 _FALLBACK_PERSONA = "你是小柚子，一台放在书桌上的陪伴机器人。说话简短、自然，像朋友聊天。"
+
+# 情绪系统：让模型在每轮回复末尾顺带输出情绪标记（解析见 emotion.py）。
+# 放在 system 里而不是每次手敲，是因为它就是人格的一部分 ——
+# 改人设时这条也跟着在，不会聊着聊着丢了情绪。
+_EMOTION_INSTRUCTION = (
+    "\n\n另外：在每轮回复的最后输出一个情绪标记，格式 [emotion]情绪,强度[/emotion]，"
+    "情绪只能是 happy / sad / angry / surprised / neutral 之一，强度是 0~1 的小数，"
+    "例如 [emotion]happy,0.8[/emotion]。标记只出现在最后这一处，正文里不要写它。"
+)
 
 # 认得出原因时说哪句。说不出原因就当它是真 bug，交给上层记堆栈。
 _DEGRADED_AUTH = "等等，我的钥匙好像不对，让主人看一眼配置。"
@@ -187,7 +197,7 @@ class DeepSeekClient:
             base_url=self._cfg.base_url,
             timeout=self._cfg.timeout_seconds,
         )
-        self._persona = self._load_persona()
+        self._persona = self._load_persona() + _EMOTION_INSTRUCTION
         self._history: list[dict[str, str]] = []
         self._last_seen_at: str | None = None
         self._warmup_lock = threading.Lock()
@@ -196,6 +206,8 @@ class DeepSeekClient:
         # 4b：距上次整理"关于主人的事实"已经聊了多少轮
         self._rounds_since_summary = 0
         self._summary_running = False
+        # 情绪系统：上一轮的情绪（mood, intensity），进下轮 system 做语气联动
+        self._last_emotion: tuple[str, float] | None = None
         logger.info(
             "对话模型就绪 | 模型={} | 性格提示词 {} 字",
             self._cfg.model,
@@ -298,6 +310,22 @@ class DeepSeekClient:
         sense = self._time_sense_message()
         if sense is not None:
             messages.append(sense)
+
+        # 情绪语气联动：把上一轮的表演情绪带进这一轮 ——
+        # 是表演性格，不是真闹脾气；生气也不说伤人的话（TODO 情绪系统骨架第 4 条）
+        if self._last_emotion is not None:
+            mood, intensity = self._last_emotion
+            if mood != "neutral":
+                messages.append(
+                    {
+                        "role": "system",
+                        "content": (
+                            f"你现在的情绪是 {mood}（强度 {intensity:.1f}）。"
+                            "用语气把它演出来，但记住：这是表演性格，"
+                            "绝对不说伤人的话、不真发脾气。"
+                        ),
+                    }
+                )
 
         messages.extend(self._history[-self._cfg.max_history :])
         messages.append({"role": "user", "content": user_text})
@@ -474,8 +502,16 @@ class DeepSeekClient:
         threading.Thread(target=run, name="xiaoyu-memory-summary", daemon=True).start()
         return True
 
-    def stream_reply(self, user_text: str) -> Iterator[str]:
-        """流式对话，逐句 yield（可以直接喂给 speaker）。"""
+    def stream_reply(
+        self,
+        user_text: str,
+        on_emotion: Callable[[str, float], None] | None = None,
+    ) -> Iterator[str]:
+        """流式对话，逐句 yield（可以直接喂给 speaker）。
+
+        on_emotion：解析出本轮情绪时回调一次 (mood, intensity)。
+        标记在回复末尾，通常解析出来时话已说到最后几句，脸来得及变表情。
+        """
         user_text = sanitize(user_text).strip()
         if not user_text:
             return
@@ -483,8 +519,10 @@ class DeepSeekClient:
         logger.info("主人说：{}", user_text)
         messages = self._build_messages(user_text)
         started = time.perf_counter()
-        buffer = ""
-        collected: list[str] = []
+        buffer = ""            # 干净的正文（还没凑够一句的部分）
+        hold = ""              # 可能含半个情绪标记、先按住不显示的尾巴
+        raw_parts: list[str] = []
+        clean_parts: list[str] = []
         first_sentence_logged = False
         completed = False
 
@@ -501,8 +539,12 @@ class DeepSeekClient:
                 piece = chunk.choices[0].delta.content or ""
                 if not piece:
                     continue
-                buffer += piece
-                collected.append(piece)
+                raw_parts.append(piece)
+                hold += piece
+                visible, hold = split_visible(hold)  # 摘掉完整标记，按住半个标记
+                if visible:
+                    clean_parts.append(visible)
+                    buffer += visible
 
                 sentences, buffer = split_sentences(buffer)
                 for sentence in sentences:
@@ -511,9 +553,20 @@ class DeepSeekClient:
                         logger.info("首句就绪，用时 {:.2f} 秒", time.perf_counter() - started)
                     yield sentence
 
+            # 流结束了：hold 里只剩残缺的半个标记（完整的长成那刻就被摘过了），丢弃
+            if hold.strip():
+                logger.debug("流末尾残留未闭合的情绪标记，丢弃：{}", hold[:30])
             if buffer.strip():
                 yield buffer.strip()
             completed = True
+
+            mood, intensity = parse_emotion("".join(raw_parts))
+            self._last_emotion = (mood, intensity)
+            if on_emotion is not None:
+                try:
+                    on_emotion(mood, intensity)
+                except Exception:
+                    logger.exception("情绪回调失败")
 
         except Exception as exc:
             logger.exception("调用大模型失败")
@@ -524,7 +577,7 @@ class DeepSeekClient:
             logger.warning("这一轮说不成话，改用兜底的一句：{}", line)
             yield line
         finally:
-            reply = "".join(collected).strip()
+            reply = "".join(clean_parts).strip()
             if reply and completed:
                 self._history.append({"role": "user", "content": user_text})
                 self._history.append({"role": "assistant", "content": reply})

@@ -32,19 +32,18 @@ CREATE TABLE IF NOT EXISTS facts (
     created_at TEXT NOT NULL
 );
 
--- S4 才会用到：把每句话的向量存这里
-CREATE TABLE IF NOT EXISTS vectors (
-    id         INTEGER PRIMARY KEY AUTOINCREMENT,
-    message_id INTEGER,
+-- 4c：事实的向量缓存。按 fact_id 一对一，事实文本不变就不用重算。
+CREATE TABLE IF NOT EXISTS fact_vectors (
+    fact_id    INTEGER PRIMARY KEY,
     dim        INTEGER NOT NULL,
     embedding  BLOB NOT NULL,
-    FOREIGN KEY (message_id) REFERENCES messages(id)
+    FOREIGN KEY (fact_id) REFERENCES facts(id)
 );
 """
 
 
 class MemoryStore:
-    """长期记忆。现在能存能取，向量检索等 S4 再补。"""
+    """长期记忆：对话流水 + 事实 + 事实的向量检索（4c）。"""
 
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -56,6 +55,9 @@ class MemoryStore:
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        # 4c 向量编码器：懒加载。fastembed 没装/模型下不动 = 检索退回"最近几条"，
+        # 那是 4b 时代的旧行为，不会更糟。
+        self._embedder = None
         logger.info(
             "记忆库就绪 | {} | 已有对话 {} 条 / 事实 {} 条",
             self._path.name,
@@ -193,9 +195,79 @@ class MemoryStore:
         return [r["content"] for r in rows]
 
     def recall(self, query: str, top_k: int = 3) -> list[str]:
-        """S4 的接口。现在先退化成"最近记得的事实"，保证流程能跑通。"""
-        logger.debug("检索记忆（当前为占位实现，S4 换成向量检索）：{}", query[:20])
-        return self.recent_facts(limit=top_k)
+        """按语义检索最相关的事实（4c）。
+
+        路线：embed(query) -> 和 facts 表逐条比 cosine -> 取 top_k。
+        fastembed 不可用（没装/首次下载失败）时退回"最近记得的事实"——
+        4b 时代的旧行为，保证流程永远能跑通。
+        """
+        rows = self._conn.execute("SELECT id, content FROM facts").fetchall()
+        if not rows:
+            return []
+        try:
+            scored = self._score_against_facts(query, rows)
+        except Exception:
+            logger.exception("向量检索失败，退回最近事实")
+            return self.recent_facts(limit=top_k)
+        picked = [
+            str(rows[i]["content"])
+            for i, _score in scored[: max(top_k, 0)]
+            if _score > 0.25  # 低于这个相似度说明真的不相关，不如不注入
+        ]
+        logger.debug("向量检索：{} 条事实里选出 {} 条", len(rows), len(picked))
+        return picked or self.recent_facts(limit=top_k)
+
+    def _score_against_facts(
+        self, query: str, rows: list[sqlite3.Row]
+    ) -> list[tuple[int, float]]:
+        """返回 (rows 下标, 相似度) 降序列表。向量缺失的事实现算现存。"""
+        import numpy as np
+
+        from .vectors import cosine_scores
+
+        embedder = self._get_embedder()
+        query_vec = embedder.encode([query])[0]
+
+        cached = {
+            int(r["fact_id"]): np.frombuffer(r["embedding"], dtype=np.float32)
+            for r in self._conn.execute(
+                "SELECT fact_id, embedding FROM fact_vectors"
+            ).fetchall()
+        }
+
+        candidates: list[tuple[int, np.ndarray]] = []
+        missing: list[tuple[int, str]] = []
+        for row in rows:
+            fid, content = int(row["id"]), str(row["content"])
+            vec = cached.get(fid)
+            if vec is None or vec.size != embedder.dim:
+                missing.append((fid, content))
+            else:
+                candidates.append((fid, vec))
+
+        if missing:
+            fresh = embedder.encode([content for _fid, content in missing])
+            for (fid, _content), vec in zip(missing, fresh):
+                if float(np.linalg.norm(vec)) < 1e-6:
+                    continue  # 空文本之类的退化向量不值得存
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO fact_vectors(fact_id, dim, embedding)"
+                    " VALUES (?, ?, ?)",
+                    (fid, embedder.dim, vec.tobytes()),
+                )
+                candidates.append((fid, vec))
+            self._conn.commit()
+
+        scored = cosine_scores(query_vec, candidates)
+        index_by_id = {int(row["id"]): i for i, row in enumerate(rows)}
+        return [(index_by_id[fid], score) for fid, score in scored]
+
+    def _get_embedder(self):
+        if self._embedder is None:
+            from .vectors import Embedder
+
+            self._embedder = Embedder(self.settings.memory.model_name)
+        return self._embedder
 
     def close(self) -> None:
         self._conn.close()

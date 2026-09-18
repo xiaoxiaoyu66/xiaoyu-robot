@@ -6,6 +6,8 @@
     {"type": "mouth",   "level": 0.37}          # 播放音量包络，约 50ms 一帧，口型跟随
     {"type": "caption", "text": "今天也要加油"}  # 正在说的这句话（字幕）
     {"type": "gaze",    "x": -0.4, "y": 0.2}    # 眼睛跟随（S6a）：人往哪，眼往哪，x/y ∈ [-1,1]
+    {"type": "emotion", "mood": "happy", "intensity": 0.8}
+                                                # 情绪系统：happy/sad/angry/surprised/neutral
 
 命令（脸 -> 主控）：
 
@@ -27,6 +29,10 @@ from urllib.parse import parse_qs, urlparse
 # 是为了让这个纯协议模块不反向依赖主控的状态机。
 VALID_STATES = frozenset({"idle", "listening", "thinking", "speaking", "error"})
 
+# 和 llm/emotion.py 的 VALID_MOODS 保持一致；写两遍是为了让
+# 纯协议模块不反向依赖大模型那侧。
+VALID_MOODS = frozenset({"happy", "sad", "angry", "surprised", "neutral"})
+
 
 def state_message(state: str) -> dict:
     if state not in VALID_STATES:
@@ -41,6 +47,18 @@ def mouth_message(level: float) -> dict:
 
 def caption_message(text: str) -> dict:
     return {"type": "caption", "text": text.strip()}
+
+
+def emotion_message(mood: str, intensity: float) -> dict:
+    """情绪事件。不认识的 mood 一律降为 neutral —— 脸是消费端，不能被主控带崩。"""
+    if mood not in VALID_MOODS:
+        mood = "neutral"
+    try:
+        level = float(intensity)
+    except (TypeError, ValueError):
+        level = 0.5
+    level = round(max(0.0, min(1.0, level)), 3)
+    return {"type": "emotion", "mood": mood, "intensity": level}
 
 
 def gaze_message(x: float, y: float) -> dict:

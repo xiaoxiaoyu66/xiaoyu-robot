@@ -22,6 +22,19 @@ from .text import sanitize
 
 DEFAULT_LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
 
+# 测试进程不要把日志写进生产 logs/。
+# 原因：get_logger() 会在 import 时就把文件 sink 建起来，跑一次测试
+# 就往 logs/error.log 灌一堆测试堆栈（实测 527 行、跑 3 个用例涨 7KB），
+# 会淹掉真实故障，也让 `python -m xiaoyu --wake-report` 的误唤醒统计失真。
+# 放在这里而不是 tests/conftest.py：unittest discover 是把测试模块当顶层模块
+# 导入的，tests/__init__.py 根本不会被执行。
+if "pytest" in sys.modules or "unittest" in sys.modules:
+    import tempfile
+
+    os.environ.setdefault(
+        "XIAOYU_LOG_DIR", str(Path(tempfile.gettempdir()) / "xiaoyu-tests-logs")
+    )
+
 _CONSOLE_FMT = (
     "<green>{time:HH:mm:ss}</green> | "
     "<level>{level: <7}</level> | "

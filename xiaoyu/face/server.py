@@ -132,6 +132,10 @@ class FaceServer:
         """眼睛跟随（S6a）。发布节奏由 vision 那边节流（默认 10Hz）。"""
         self._publish(protocol.gaze_message(x, y))
 
+    def publish_emotion(self, mood: str, intensity: float) -> None:
+        """情绪系统：一轮回复的情绪标签，脸拿去变眉眼/光环。"""
+        self._publish(protocol.emotion_message(mood, intensity))
+
     def _publish(self, payload: dict) -> None:
         """跨线程广播。没有脸连着时直接丢 —— 脸是锦上添花，
         绝不能反过来拖住主控。"""

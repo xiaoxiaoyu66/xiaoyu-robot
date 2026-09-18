@@ -217,6 +217,7 @@ def run_text_mode(settings: Settings) -> None:
         face.publish_caption if face else None,
         console_face.on_caption if console_face else None,
     )
+    on_emotion = _caption_emitter(face.publish_emotion if face else None)
     try:
         while True:
             try:
@@ -233,7 +234,7 @@ def run_text_mode(settings: Settings) -> None:
             state.set(State.SPEAKING, "开始回答")
             try:
                 synthesizer.speak_stream(
-                    client.stream_reply(text),
+                    client.stream_reply(text, on_emotion=on_emotion),
                     on_sentence=on_caption,
                 )
                 if face is not None and face.interrupted():
@@ -265,10 +266,13 @@ def play_cue(synthesizer, kind: str, settings: Settings) -> None:
         logger.debug("提示音没播出来，忽略", exc_info=True)
 
 
+# 主循环自愈（S5.5）：单轮异常不退出，连续失败这么多轮才放弃、
+# 交回给进程守护（run_forever.cmd / systemd）重启。退出原因写进 logs\error.log。
+MAX_CONSECUTIVE_FAILURES = 5
+
+
 def run_voice_loop(settings: Settings) -> None:
     """完整链路：唤醒 -> 录音 -> 识别 -> 回答 -> 出声。"""
-    import numpy as np
-
     from .asr.recognizer import SpeechRecognizer
     from .audio import sfx
     from .audio.recorder import Recorder
@@ -291,50 +295,51 @@ def run_voice_loop(settings: Settings) -> None:
         face.publish_caption if face else None,
         console_face.on_caption if console_face else None,
     )
+    on_emotion = _caption_emitter(face.publish_emotion if face else None)
+
+    # S5.5：开机采一段环境噪声，把静音阈值改成自适应的。
+    # 笔记本和 N100 的麦克风噪声底完全不同，固定值搬过去会失效。
+    recorder.calibrate_noise_floor()
+    vad_model = (
+        str(settings.paths.vad_model) if settings.paths.vad_model.exists() else None
+    )
+
     # 后台把对话连接建好。待机可能几十分钟，连接早被回收了，
     # 不预热的话每次“第一句话”都要多等 1.5 秒。
     client.warmup_async()
 
     logger.info("全部就绪，开始待机。按 Ctrl+C 退出。")
+    consecutive_failures = 0
     try:
         while True:
-            state.set(State.IDLE, "等待唤醒")
-            detector.listen_once()
-            play_cue(synthesizer, sfx.ACK, settings)      # 先应一声，别让人干等
-            client.warmup_async()   # 接下来要录音+识别，正好拿这段时间把连接建好
-
-            for round_index in range(1, FOLLOW_UP_ROUNDS + 1):
-                state.set(State.LISTENING, f"第 {round_index} 轮")
-                audio = recorder.record_until_silence()
-                if audio.size == 0 or float(np.abs(audio).max()) < 1e-4:
-                    logger.info("没有听到内容，回去待机")
-                    break
-
-                state.set(State.THINKING, "识别中")
-                text = recognizer.transcribe(audio)
-                if not text:
-                    logger.info("没听清，回去待机")
-                    break
-
-                state.set(State.SPEAKING, "开始回答")
-                try:
-                    synthesizer.speak_stream(
-                        client.stream_reply(text),
-                        on_sentence=on_caption,
+            try:
+                _one_conversation(
+                    settings, state, detector, recorder, recognizer,
+                    synthesizer, client, face, on_caption, on_emotion, vad_model,
+                )
+                consecutive_failures = 0  # 完整跑完一轮，失败计数清零
+            except KeyboardInterrupt:
+                raise
+            except Exception:
+                # 自愈（v3 §4）：记日志 -> 等 2 秒 -> 回待机。
+                # 拔插 USB 设备、网络闪断这类一次性的毛刺不该杀掉常驻进程。
+                consecutive_failures += 1
+                logger.exception(
+                    "本轮对话异常（连续第 {} 次）", consecutive_failures
+                )
+                if consecutive_failures >= MAX_CONSECUTIVE_FAILURES:
+                    logger.error(
+                        "连续失败 {} 次，程序退出交给进程守护重启",
+                        consecutive_failures,
                     )
-                except Exception:
-                    logger.exception("回答失败，回到待机")
-                    break
-                if face is not None and face.interrupted():
-                    # 触屏打断：声音已经停了，等余音散掉再开麦 ——
-                    # 半双工铁律不能破，麦开早了它会听见自己的回音。
-                    face.clear_interrupt()
-                    logger.info("被触屏打断，停下来听你说")
-                    time.sleep(0.2)
-                    state.set(State.LISTENING, "被打断，继续听")
-                    continue
-
-            state.set(State.IDLE, "本轮结束")
+                    _write_error_log(
+                        settings,
+                        f"连续 {consecutive_failures} 轮对话失败，"
+                        "程序主动退出，等待进程守护重启",
+                    )
+                    return
+                time.sleep(2.0)
+                state.set(State.IDLE, "异常恢复，回待机")
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，退出")
     finally:
@@ -342,16 +347,122 @@ def run_voice_loop(settings: Settings) -> None:
         memory.close()
 
 
+def _one_conversation(
+    settings, state, detector, recorder, recognizer,
+    synthesizer, client, face, on_caption, on_emotion, vad_model,
+) -> None:
+    """唤醒后的一整段对话（最多 FOLLOW_UP_ROUNDS 轮）。
+
+    从主循环里拆出来，只为让"自愈"有一个清晰的边界：
+    这个函数抛任何异常，外层都会接住、回待机。
+    """
+    from .audio import sfx
+
+    state.set(State.IDLE, "等待唤醒")
+    detector.listen_once()
+    play_cue(synthesizer, sfx.ACK, settings)      # 先应一声，别让人干等
+    client.warmup_async()   # 接下来要录音+识别，正好拿这段时间把连接建好
+
+    for round_index in range(1, FOLLOW_UP_ROUNDS + 1):
+        state.set(State.LISTENING, f"第 {round_index} 轮")
+        audio = recorder.record_until_silence()
+        if not recorder.contains_speech(audio, vad_model):
+            logger.info("没有听到内容，回去待机")
+            break
+
+        state.set(State.THINKING, "识别中")
+        text = recognizer.transcribe(audio)
+        if not text:
+            logger.info("没听清，回去待机")
+            break
+
+        state.set(State.SPEAKING, "开始回答")
+        try:
+            synthesizer.speak_stream(
+                client.stream_reply(text, on_emotion=on_emotion),
+                on_sentence=on_caption,
+            )
+        except Exception:
+            logger.exception("回答失败，回到待机")
+            break
+        if face is not None and face.interrupted():
+            # 触屏打断：声音已经停了，等余音散掉再开麦 ——
+            # 半双工铁律不能破，麦开早了它会听见自己的回音。
+            face.clear_interrupt()
+            logger.info("被触屏打断，停下来听你说")
+            time.sleep(0.2)
+            state.set(State.LISTENING, "被打断，继续听")
+            continue
+
+    state.set(State.IDLE, "本轮结束")
+
+
+def _write_error_log(settings: Settings, reason: str) -> None:
+    """自愈放弃时的退出原因，落一份小文件给守护进程/主人看。"""
+    try:
+        path = settings.paths.logs / "error.log"
+        path.write_text(
+            time.strftime("%Y-%m-%d %H:%M:%S") + " | " + reason + "\n",
+            encoding="utf-8",
+        )
+    except OSError:
+        logger.warning("写 error.log 失败", exc_info=True)
+
+
+def wake_report(settings: Settings) -> int:
+    """误唤醒率有数（S5.5）：统计日志里的唤醒事件，按天列出次数。
+
+    用法：python -m xiaoyu --wake-report
+    阈值合不合适不靠感觉：夜里没人说话的日子应该是 0 次，
+    超过 1 次/天就调高 XIAOYU_KWS 阈值（config.py keywords_threshold）。
+    """
+    import re
+    from collections import Counter
+    from pathlib import Path
+
+    pattern = re.compile(r"WAKE_EVENT \| ts=(\d{4}-\d{2}-\d{2})")
+    per_day: Counter[str] = Counter()
+    logs_dir: Path = settings.paths.logs
+    files = sorted(logs_dir.glob("xiaoyu_*.log"))
+    if not files:
+        logger.warning("日志目录里没有 xiaoyu_*.log：{}", logs_dir)
+        return 1
+    for path in files:
+        try:
+            for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+                match = pattern.search(line)
+                if match:
+                    per_day[match.group(1)] += 1
+        except OSError:
+            logger.warning("读日志失败，跳过：{}", path.name, exc_info=True)
+
+    if not per_day:
+        logger.info("日志里还没有唤醒事件（WAKE_EVENT）。先正常跑一天再来。")
+        return 0
+    logger.info("误唤醒统计（按天）：")
+    for day in sorted(per_day):
+        count = per_day[day]
+        note = "  偏高：考虑调高唤醒阈值" if count > 3 else ""
+        logger.info("{}  唤醒 {} 次{}", day, count, note)
+    logger.info("判断标准：没人说话的日子应该接近 0；持续 >3 次/天就调阈值。")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="xiaoyu", description="XiaoYu Robot 桌面陪伴机器人")
     parser.add_argument("--check", action="store_true", help="只做环境自检，不启动硬件")
     parser.add_argument("--text", action="store_true", help="键盘模式（不需要麦克风）")
+    parser.add_argument("--wake-report", action="store_true", help="统计每天的唤醒次数（误唤醒率有数）")
     parser.add_argument("--log-level", default=None, help="覆盖日志级别，如 DEBUG")
     args = parser.parse_args(argv)
 
     settings = Settings.load()
     setup_logging(level=args.log_level)
     log_banner(settings)
+
+    # 只读日志，不需要硬件就绪 —— 放在环境自检之前，坏了也能查误唤醒。
+    if args.wake_report:
+        return wake_report(settings)
 
     ready = log_diagnose(settings)
     if args.check:

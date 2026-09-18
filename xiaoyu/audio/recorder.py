@@ -50,6 +50,66 @@ class Recorder:
             description,
         )
 
+    def calibrate_noise_floor(self, seconds: float = 0.3) -> float:
+        """开机时采一段环境噪声，把静音阈值改成"噪声底 × 系数"（S5.5）。
+
+        固定阈值 0.015 是笔记本上手调的值 —— N100 挂的 USB 麦噪声底完全不同，
+        搬过去大概率直接失效。自适应之后，安静房间和有点底噪的房间都能用。
+
+        返回校准后的阈值。校准失败（麦克风被占）保留配置里的默认值。
+        """
+        cfg = self.config
+        try:
+            audio = self.record_fixed(seconds)
+        except Exception:
+            logger.warning("噪声底校准失败，沿用配置阈值 {}", cfg.silence_threshold)
+            return cfg.silence_threshold
+
+        floor = float(np.sqrt(np.mean(audio**2)))  # RMS 比峰值更能代表"底噪"
+        adapted = min(max(floor * 4.0, 0.008), 0.08)
+        original = cfg.silence_threshold
+        # AudioConfig 是 frozen dataclass：用 object.__setattr__ 改这一份实例
+        object.__setattr__(cfg, "silence_threshold", adapted)
+        logger.info(
+            "噪声底校准完成 | 底噪 RMS={:.4f} -> 静音阈值 {:.4f}（原为 {:.4f}）",
+            floor, adapted, original,
+        )
+        return adapted
+
+    def contains_speech(self, audio: np.ndarray, model_path: str | None = None) -> bool:
+        """这段录音里有没有人说话（VAD 决断，S5.5）。
+
+        优先用 silero-vad（模型已在 models/ 下，sherpa-onnx 自带接口）；
+        模型缺失/推理失败时退回老的振幅启发式 —— 那本来就是现状，不会更糟。
+        """
+        if audio.size == 0:
+            return False
+        if model_path:
+            try:
+                return self._silero_has_speech(audio, model_path)
+            except Exception:
+                logger.warning("silero-vad 推理失败，退回振幅判断", exc_info=True)
+        return bool(float(np.abs(audio).max()) >= 1e-4)
+
+    @staticmethod
+    def _silero_has_speech(audio: np.ndarray, model_path: str) -> bool:
+        import sherpa_onnx
+
+        vad = sherpa_onnx.Vad(
+            model=model_path,
+            threshold=0.5,
+            min_silence_duration=0.25,
+            min_speech_duration=0.1,
+            window_size=512,
+        )
+        samples = np.asarray(audio, dtype=np.float32)
+        for start in range(0, len(samples), 512):
+            vad.accept_waveform(samples[start : start + 512])
+            if not vad.is_empty():
+                return True
+        vad.flush()
+        return not vad.is_empty()
+
     def record_until_silence(self) -> np.ndarray:
         """录到你说完为止，返回 float32 单声道波形。"""
         cfg = self.config

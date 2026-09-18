@@ -86,6 +86,15 @@ class WakeWordDetector:
         if result:
             self._spotter.reset_stream(self._stream)
             logger.info("听到唤醒词：{}", result)
+            # 结构化事件行：误唤醒率统计（--wake-report）扫的就是它。
+            # 格式别乱改，统计靠 "WAKE_EVENT |" 前缀 + ts 字段。
+            import time as _time
+
+            logger.info(
+                "WAKE_EVENT | ts={} | keyword={}",
+                _time.strftime("%Y-%m-%d %H:%M:%S"),
+                result,
+            )
             return result
         return None
 

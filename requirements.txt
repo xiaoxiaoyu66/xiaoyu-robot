@@ -24,8 +24,9 @@ openai>=1.40
 # ---------- 表情脸（S5，主控和脸之间的 WebSocket）----------
 websockets>=12
 
-# ---------- 记忆（S4 再装，会连带下载约 2GB PyTorch）----------
-# sentence-transformers>=3.0
+# ---------- 记忆（4c 向量检索；可选：没装就退回"最近几条事实"）----------
+fastembed>=0.2
+# sentence-transformers>=3.0   # 旧重路线，连带 2GB PyTorch，不用装
 
 # ---------- 眼睛跟随（S6a，可选：装不上就静默禁用）----------
 # mediapipe>=0.10

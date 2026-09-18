@@ -189,11 +189,15 @@ x iǎo y ǔ :2.5 #0.5 @小宇
 
 ## 测试
 
-零依赖，随时可跑：
+零依赖，随时可跑（当前 230 个）：
 
 ```powershell
 python -m unittest discover tests -v
+python -m pytest tests          # 同一批用例，数字应该和上面一致
 ```
+
+测试**不会**往 `logs/` 写日志 —— `logger.py` 发现自己在 pytest / unittest 下，
+就把日志改道到系统临时目录，免得测试堆栈淹掉真实故障。
 
 ---
 

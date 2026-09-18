@@ -56,6 +56,9 @@ let nextLook = 200;
 // 眼睛跟随（S6a）：最近一次 gaze 事件。500ms 没新 gaze 就回待机游荡。
 const GAZE_TTL = 500;
 let gazeX = 0, gazeY = 0, gazeAt = 0;
+// 情绪系统：最近一次 emotion 事件。12 秒后回 neutral。
+const MOOD_TTL = 12000;
+let mood = "neutral", moodIntensity = 0.5, moodAt = 0;
 
 const PANEL = "#262624";
 const EYE = "#F1EFE8";
@@ -87,6 +90,15 @@ function connect() {
       mouthTarget = Math.max(0, Math.min(1, msg.level || 0));
     } else if (msg.type === "caption") {
       captionEl.textContent = msg.text || "";
+    } else if (msg.type === "gaze") {
+      gazeX = Math.max(-1, Math.min(1, msg.x || 0));
+      gazeY = Math.max(-1, Math.min(1, msg.y || 0));
+      gazeAt = Date.now();
+    } else if (msg.type === "emotion") {
+      const m = String(msg.mood || "neutral");
+      mood = ["happy", "sad", "angry", "surprised", "neutral"].includes(m) ? m : "neutral";
+      moodIntensity = Math.max(0, Math.min(1, msg.intensity || 0.5));
+      moodAt = Date.now();
     }
   };
   ws.onclose = () => {
@@ -160,11 +172,36 @@ function draw() {
   ctx.fillStyle = PANEL;
   ctx.fill();
 
+  // 情绪（m）：12 秒内有效，过期回 neutral。强度 k 控制光环/腮红的浓度。
+  const moodFresh = Date.now() - moodAt < MOOD_TTL;
+  const m = moodFresh ? mood : "neutral";
+  const k = moodFresh ? moodIntensity : 0;
+
+  // 情绪光环：脸屏外圈一圈情绪色的辉光（开心暖金 / 难过蓝灰 / 生气红 / 惊讶青）
+  const HALO = {
+    happy: "rgba(224,168,74,", sad: "rgba(110,126,160,",
+    angry: "rgba(196,64,48,", surprised: "rgba(72,166,164,",
+  };
+  if (HALO[m] && k > 0.05) {
+    ctx.save();
+    ctx.shadowColor = HALO[m] + 0.55 * k + ")";
+    ctx.shadowBlur = 40 * k;
+    rr(60, 40, W - 120, H - 80, 38);
+    ctx.strokeStyle = HALO[m] + 0.8 * k + ")";
+    ctx.lineWidth = 3;
+    ctx.stroke();
+    ctx.restore();
+  }
+
   // 眼睛参数
   let eyeW = 56, eyeH = 84;
   if (state === "listening") eyeH = 96;          // 听你说话：睁大一点
   if (state === "thinking") { eyeH = 70; lookTargetY = -16; }  // 在想：眼睛往上瞟
   if (state === "speaking") eyeH = 84 + mouthShown * 6;        // 说话：随语气轻轻跳
+  if (m === "surprised") { eyeW *= 1.15; eyeH *= 1.3; }        // 惊讶：瞪圆
+  if (m === "angry") { eyeH *= 0.7; }                          // 生气：锐眼
+  if (m === "sad") { eyeH *= 0.65; }                           // 难过：垂眼
+  if (m === "happy") { eyeH *= 0.8; }                          // 开心：眼角弯下去前先把眼皮放矮
 
   // 眼睛目标优先级（S6a）：gaze 跟随 > 待机游荡。
   // 待机/听话时 500ms 内有 gaze 就盯着人看；超时或人不见了回游荡。
@@ -180,6 +217,7 @@ function draw() {
     lookTargetX = d[0]; lookTargetY = d[1];
     nextLook = 160 + Math.random() * 200;
   }
+  if (m === "sad") lookTargetY += 5;   // 难过：视线略垂
   lookX += (lookTargetX - lookX) * 0.08;
   lookY += (lookTargetY - lookY) * 0.08;
 
@@ -187,11 +225,53 @@ function draw() {
   if (--nextBlink <= 0) { blinkLeft = 7; nextBlink = 150 + Math.random() * 180; }
   if (blinkLeft > 0) { blinkLeft--; eyeH *= 0.08; }
 
+  // 眉毛：生气倒眉 / 难过八字眉 / 惊讶挑眉
+  if (m === "angry" || m === "sad" || m === "surprised") {
+    ctx.strokeStyle = EYE;
+    ctx.lineWidth = 5;
+    ctx.lineCap = "round";
+    const browY = cy - eyeH / 2 - 20;
+    // 左眉：angry 外高内低；sad 外低内高；surprised 整体抬高
+    const lo = m === "angry" ? -12 : m === "sad" ? 8 : 0;
+    const li = m === "angry" ? 12 : m === "sad" ? -8 : 0;
+    const lift = m === "surprised" ? -9 * k : 0;
+    ctx.beginPath();
+    ctx.moveTo(cx - 58 - eyeW / 2 - 8, browY + lift + lo);
+    ctx.lineTo(cx - 58 + eyeW / 2 + 8, browY + lift + li);
+    ctx.stroke();
+    ctx.beginPath();   // 右眉镜像
+    ctx.moveTo(cx + 58 + eyeW / 2 + 8, browY + lift + lo);
+    ctx.lineTo(cx + 58 - eyeW / 2 - 8, browY + lift + li);
+    ctx.stroke();
+  }
+
   // 画眼
   ctx.fillStyle = EYE;
   const ex = cx - eyeW / 2, ey = cy - eyeH / 2;
   bean(ex - 58 + lookX, ey + lookY, eyeW, eyeH);
   bean(ex + 58 + lookX, ey + lookY, eyeW, eyeH);
+
+  // 开心：用面板色盖住 bean 的下缘，豆眼变弯月眼（Vector 笑眼）
+  if (m === "happy") {
+    ctx.fillStyle = PANEL;
+    ctx.beginPath();
+    ctx.ellipse(cx - 58 + lookX, cy + lookY + eyeH * 0.5, eyeW * 0.85, eyeH * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 58 + lookX, cy + lookY + eyeH * 0.5, eyeW * 0.85, eyeH * 0.45, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // 开心腮红
+  if (m === "happy" && k > 0.1) {
+    ctx.fillStyle = "rgba(233,120,120," + 0.35 * k + ")";
+    ctx.beginPath();
+    ctx.ellipse(cx - 96, cy + 44, 16, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(cx + 96, cy + 44, 16, 9, 0, 0, Math.PI * 2);
+    ctx.fill();
+  }
 
   // 嘴：只在说话时出现，跟音量动
   mouthShown += (mouthTarget - mouthShown) * 0.4;

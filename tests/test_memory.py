@@ -20,6 +20,7 @@ import dataclasses
 import tempfile
 import unittest
 from datetime import datetime
+from unittest import mock
 from pathlib import Path
 
 try:
@@ -172,20 +173,22 @@ class TestFactsAndRecall(MemoryStoreTestCase):
         """4b 之前 facts 表就该是空的 —— 这条也是 4b 的出发点。"""
         self.assertEqual(self.store.recent_facts(), [])
 
-    def test_recall_is_a_placeholder_until_4c(self):
-        """现在的 recall() 只是"最近的事实"，查什么跟返回什么没关系。
-
-        这一条是给 4c 留的标记：换成向量检索时要连这个测试一起改，
-        别让它悄悄变成"看起来还在跑、其实早就不检索了"。
-        """
+    def test_recall_is_empty_without_facts(self):
+        """一条事实都没有时，检索什么也不该返回 —— 连编码器都不用惊动。"""
         self.assertEqual(self.store.recall("随便问点啥"), [])
-        self.store.add_fact("主人是 Java 出身的大四学生")
-        self.assertEqual(self.store.recall("主人是学什么的"), ["主人是 Java 出身的大四学生"])
 
-    def test_recall_respects_top_k_and_prefers_recent_facts(self):
+    def test_recall_falls_back_to_recent_facts_without_embedder(self):
+        """4c：编码器不可用时 recall 退回 4b 的"最近的事实"，不抛异常。
+
+        真编码的语义检索在 tests/test_memory_recall.py 里测；
+        这一条刻意把编码器按掉，好让本文件继续"零依赖 + 确定性"。
+        """
         for i in range(5):
             self.store.add_fact(f"事实 {i}")
-        self.assertEqual(self.store.recall("x", top_k=2), ["事实 4", "事实 3"])
+        with mock.patch(
+            "xiaoyu.memory.vectors.Embedder", side_effect=ImportError("no fastembed")
+        ):
+            self.assertEqual(self.store.recall("x", top_k=2), ["事实 4", "事实 3"])
 
     def test_facts_survive_a_restart(self):
         self.store.add_fact("主人在准备考研")
