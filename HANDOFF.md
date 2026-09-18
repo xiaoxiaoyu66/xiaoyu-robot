@@ -290,6 +290,12 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
     而且报错点往往在 `xiaoyu/audio/player.py` 的 `import numpy as np`，
     **看起来像 Kokoro/TTS 崩了，其实是解释器选错了** —— 2026-09-18 在这上面白绕了一圈。
     → 调 `kokoro_speed.py` 那次 `exit=1`、日志全空，就是这么来的。
+21. **非交互环境里 `git push` 会无声失败（exit 128、零输出）**（2026-09-18 实测）。
+    认证本身是通的（服务端返回 200），崩在推送后 git 调 `git credential-manager store`
+    存凭据那一步 —— GCM 在非交互环境下报错，把整个 push 拖死。
+    → 绕法：`git -c credential.helper= push "https://<用户名>:<token>@github.com/..." main`，
+    token 用 `"protocol=https`nhost=github.com`n" | git credential-manager get` 现取，
+    **别写进任何文档**。用户自己开的正常终端窗口里没有这个坑。
 
 ---
 
