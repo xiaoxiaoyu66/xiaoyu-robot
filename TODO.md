@@ -66,6 +66,7 @@
       - [ ] 第 3/5 步 · `xiaoyu/xiaozhi/session.py`（会话状态机，事件驱动）
       - [ ] 第 4/5 步 · `xiaoyu/xiaozhi/audio_codec.py`（Opus 抽象 + 假实现）
       - [ ] 第 5/5 步 · `xiaoyu/xiaozhi/server.py`（最小服务端：能连上 / 收发 / 优雅收工）
+            ⚠️ **端口别用 8765** —— 本体（在跑浸泡验收）正占着它，撞了会干扰验收
       - [ ] 第二批（等板子）· 接 LLM/记忆/TTS → 端到端 → 能打断 → 一个开关接进 app.py
 - [x] **平板端第一步** —— 2026-09-19 完成：主控用 HTTP 伺服 `face/`，
       平板打开 `http://<主机IP>:8765/` 就是脸（token 自动注入、断线看得见、
