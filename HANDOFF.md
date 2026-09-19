@@ -1046,7 +1046,8 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
 | 项目 | Stars | 语言 | 备注 |
 |------|-------|------|------|
 | `78/xiaozhi-esp32` | 30.0k | C++ | 中文语音助手的事实标准，极活跃 |
-| `xinnan-tech/xiaozhi-esp32-server` | 10.6k | JS | 后端就是完整的 VAD→ASR→LLM→TTS + 打断，**架构图最值得抄** |
+| `xinnan-tech/xiaozhi-esp32-server` | 10.6k | Python/Java/Vue | 后端就是完整的 VAD→ASR→LLM→TTS + 打断，**架构图最值得抄**；记忆有 `mem_local_short` / mem0 / PowerMem，知识库接 RAGFlow（比我们的 4a/4b/4c 更「配置化」，但依赖外部服务，我们是本地自研） |
+| `m5stack/StackChan` | 1.3k | C++/Dart/Go | M5Stack 官方整机（2026-01 建库）：ESP-IDF 固件 + Flutter App + Go 服务端，`firmware/` 和 `server/` 各自 MIT，**仓库根目录没有 LICENSE**。DIY 原版是 `meganetaaan/stack-chan`（1.7k / Apache-2.0 / TypeScript） |
 | `Open-LLM-VTuber/Open-LLM-VTuber` | 13.8k | Python | Live2D + 语音打断，和 S5 对口；但 2026-05 后没更新 |
 | `moeru-ai/airi` | 49.2k | TypeScript | 终态参考，很重，现在看不懂正常 |
 | `k2-fsa/sherpa-onnx` | 14.8k | C++ | 已在使用，KWS + ASR + TTS 一家全包，**别再加别的音频库** |
