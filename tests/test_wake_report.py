@@ -60,5 +60,36 @@ class CountWakeEventsTest(unittest.TestCase):
         self.assertEqual(sum(night.values()), 0)
 
 
+    def test_rotated_zip_log_is_still_counted(self):
+        """loguru 每天零点把前一天压成 .zip，统计不能因此断片。
+
+        2026-09-19 实际踩到：9-18 晚上那次唤醒所在的日志已经被压缩，
+        --wake-report 直接看不见 —— 一周验收的"凌晨 0 次"就无从谈起。
+        """
+        import zipfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp, "xiaoyu_2026-09-18.log.zip")
+            with zipfile.ZipFile(path, "w") as archive:
+                archive.writestr("xiaoyu_2026-09-18.log", LOG)
+            per_day, night = count_wake_events(Path(tmp))
+        self.assertEqual(per_day["2026-09-18"], 2)
+        self.assertEqual(night["2026-09-19"], 1)
+
+    def test_broken_zip_is_skipped_not_fatal(self):
+        """压坏了的归档不该把统计带崩（也顺手别让测试输出里刷告警）。"""
+        from loguru import logger as loguru_logger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            Path(tmp, "xiaoyu_2026-09-18.log.zip").write_bytes(b"not a zip")
+            Path(tmp, "xiaoyu_2026-09-19.log").write_text(LOG, encoding="utf-8")
+            loguru_logger.disable("xiaoyu.app")
+            try:
+                per_day, _night = count_wake_events(Path(tmp))
+            finally:
+                loguru_logger.enable("xiaoyu.app")
+        self.assertEqual(per_day["2026-09-18"], 2)
+
+
 if __name__ == "__main__":
     unittest.main()

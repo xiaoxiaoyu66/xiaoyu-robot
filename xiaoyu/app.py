@@ -439,11 +439,44 @@ _WAKE_EVENT_PATTERN = r"WAKE_EVENT \| ts=(\d{4}-\d{2}-\d{2}) (\d{2}):"
 NIGHT_HOURS = frozenset({"00", "01", "02", "03", "04", "05"})
 
 
+def _read_wake_log(path: Path) -> str | None:
+    """读一份唤醒日志；读不出来就返回 None —— 少一份日志不该把统计整体带崩。"""
+    if path.suffix == ".zip":
+        import zipfile
+
+        try:
+            with zipfile.ZipFile(path) as archive:
+                members = [name for name in archive.namelist() if name.endswith(".log")]
+                if not members:
+                    return None
+                return archive.read(members[0]).decode("utf-8", errors="replace")
+        except (OSError, zipfile.BadZipFile):
+            logger.warning("读压缩日志失败，跳过：{}", path.name, exc_info=True)
+            return None
+
+    try:
+        return path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        logger.warning("读日志失败，跳过：{}", path.name, exc_info=True)
+        return None
+
+
+def _wake_logs(logs_dir: Path) -> list[Path]:
+    """要统计哪些日志：当天的 .log，加上 loguru 压过的 .log.zip。
+
+    只看 *.log 会漏历史：loguru 每天零点把前一天压成 .zip（见 logger.py），
+    一周验收跑完再看，能看见的就只剩最后一天。
+    2026-09-19 实际踩到 —— 9-18 晚上那次唤醒因为日志已被压缩，--wake-report
+    直接看不见，验收报告等于少了一天数据。
+    """
+    return sorted(logs_dir.glob("xiaoyu_*.log")) + sorted(logs_dir.glob("xiaoyu_*.log.zip"))
+
+
 def count_wake_events(logs_dir: Path) -> tuple[Counter[str], Counter[str]]:
-    """扫 logs_dir 下的 xiaoyu_*.log，返回（每天唤醒次数, 每天凌晨唤醒次数）。
+    """扫 logs_dir 下的唤醒日志（含压缩归档），返回（每天唤醒次数, 每天凌晨次数）。
 
     纯读文件 + 计数：不打印、不写日志、不联网，好单测。
-    只认 `WAKE_EVENT` 行，不认"听到唤醒词"那行 —— 两者是同一件事的两条日志，
+    只认 `WAKE_EVENT | ts=` 行，不认"听到唤醒词"那行 —— 两者是同一件事的两条日志，
     都数会翻倍。
     """
     import re
@@ -452,11 +485,9 @@ def count_wake_events(logs_dir: Path) -> tuple[Counter[str], Counter[str]]:
     pattern = re.compile(_WAKE_EVENT_PATTERN)
     per_day: Counter[str] = Counter()
     night: Counter[str] = Counter()
-    for path in sorted(logs_dir.glob("xiaoyu_*.log")):
-        try:
-            text = path.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            logger.warning("读日志失败，跳过：{}", path.name, exc_info=True)
+    for path in _wake_logs(logs_dir):
+        text = _read_wake_log(path)
+        if text is None:
             continue
         for match in pattern.finditer(text):
             day, hour = match.group(1), match.group(2)
