@@ -39,6 +39,12 @@ TASK_NAME = "XiaoYuRobot"
 ROOT = Path(__file__).resolve().parent.parent
 GUARDIAN = ROOT / "scripts" / "guardian.py"
 
+# 脚本是直接跑的，sys.path[0] 是 scripts/ 自己 —— 补上项目根才 import 得到主包
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from xiaoyu.lifecycle import read_guardian_log  # noqa: E402  （要等 ROOT 进 sys.path）
+
 _TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
@@ -184,8 +190,8 @@ def install() -> None:
     print("  设置 -> Windows 更新 -> 高级选项 -> 使用时段")
     print("  设成你平时在家的 8~10 小时，别让它大半夜自动重启。")
     print()
-    print(f"验收：一周里随时跑 --status，xiaoyu 那行 pid 不该断；")
-    print(f"      logs\\guardian.log 里 starting 应该一直只有 1 行（多出来就是它挂过）。")
+    print("验收：一周里随时跑 --status，「本体中途崩溃次数」应该一直是 0；")
+    print("      「守护启动次数」只在开过机 / 重登录后 +1（没开机就多出来 = 它挂过）。")
 
 
 def start() -> None:
@@ -246,22 +252,19 @@ def status() -> None:
     print(f"守护：{'在，pid=' + ', '.join(str(g) for g in guardians) if guardians else '没在跑'}")
     print(f"脸页端口 8765：{'在听' if listening else '没在听'}")
 
-    log = ROOT / "logs" / "guardian.log"
-    if log.exists():
-        starts = 0
-        crashes = 0
-        with log.open("r", encoding="utf-8", errors="backslashreplace") as fh:
-            for line in fh:
-                if "guardian: starting" in line:
-                    starts += 1
-                elif "guardian: exited" in line:
-                    crashes += 1
-        # 「启动次数」不是异常信号：每次开机 / 重登录都会 +1。
-        # 真正要盯的是本体中途崩了几次 —— 那才说明有东西坏了。
-        print(f"守护启动次数：{starts}（每次开机 / 重登录 +1，正常）")
+    # 「启动次数」不是异常信号：每次开机 / 重登录都会 +1。
+    # 真正要盯的是本体中途崩了几次 —— 那才说明有东西坏了。
+    # 关机时被系统终结不算崩溃，判定规则在 xiaoyu/lifecycle.py（只写一份）。
+    summary = read_guardian_log(ROOT / "logs" / "guardian.log")
+    print(f"守护启动次数：{summary.starts}（每次开机 / 重登录 +1，正常）")
+    print(
+        f"本体中途崩溃次数：{summary.crashes}"
+        + ("（正常）" if summary.crashes == 0 else "  <- 异常，去看 logs\\error.log")
+    )
+    if summary.system_stops:
         print(
-            f"本体中途崩溃次数：{crashes}"
-            + ("（正常）" if crashes == 0 else "  <- 异常，去看 logs\\error.log")
+            f"      另有 {summary.system_stops} 次随系统关机退出"
+            "（关机 / 注销时被系统终结，不算崩溃）"
         )
 
     print()

@@ -5,6 +5,7 @@
         logger.py     日志（全项目唯一出口）
         config.py     配置（路径 / 参数 / 密钥）
         state.py      状态机（idle / listening / thinking / speaking）
+        lifecycle.py  常驻生命周期（S5.5：守护日志的判定）
         audio/        录音、播放、设备自检
         wake/         唤醒词
         asr/          语音转文字
