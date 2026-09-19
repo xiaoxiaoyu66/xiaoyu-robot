@@ -1,0 +1,13 @@
+{
+       "session_id": "xxx",
+       "type": "mcp",
+       "payload": {
+         "jsonrpc": "2.0",
+         "method": "tools/call",
+         "params": {
+           "name": "self.light.set_rgb",
+           "arguments": { "r": 255, "g": 0, "b": 0 }
+         },
+         "id": 1
+       }
+     }

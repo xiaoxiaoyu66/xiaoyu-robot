@@ -38,6 +38,13 @@
 > **上游 `78/xiaozhi-esp32` 到底用它什么、不用它什么，见
 > [`docs/xiaozhi拆解.md`](docs/xiaozhi拆解.md)** —— 决策边界都写在那（该做 4 件 + 不该做 8 条），
 > 别重开讨论。
+>
+> **2026-09-19 追加（A 档开工 · 第 1/5 步）**：板子还没到，先按
+> [`docs/xiaozhi拆解.md`](docs/xiaozhi拆解.md) §6 的动手顺序，从 §2.2.1「第一批交付物」
+> 干起 —— 那一批**不用板子、不联网**。新增 `tests/fixtures/xiaozhi/`（22 个 JSON 真样本
+> + README 溯源表），全部**逐字抄自**上游 `78/xiaozhi-esp32` 的 `docs/websocket_zh.md`，
+> 生成时硬断言「这段文字必须在原文里」，抄错就当场失败。测试仍 **309**
+> （unittest 与 pytest 数字一致）。下一步 `xiaoyu/xiaozhi/protocol.py`。
 
 ---
 
@@ -222,6 +229,11 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   （`python -m unittest discover tests` 和 `python -m pytest tests` 都是 230）。
   原先 `tests/test_gaze.py` / `test_emotion.py` / `test_memory_recall.py` 是 pytest 风格的
   孤儿、根本没进闸门，已改写成 unittest 风格并补了流式回归用例。
+
+- **A 档 · 小智协议真样本 fixture**（2026-09-19）：`tests/fixtures/xiaozhi/`
+  22 个 JSON 全部逐字抄自上游 `docs/websocket_zh.md`（生成时断言 `body in 原文`，
+  抄错即失败），带 README 溯源表（逐文件列文档章节 + 字节数 + sha256 前 12 位）。
+  **纯离线**：不碰硬件、不联网。测试仍 **309**，unittest 与 pytest 数字一致。
 
 ### 未验证（别当成已完成）
 
@@ -1057,6 +1069,42 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
 **验证**：`py -3.11 -m unittest discover tests` 290 -> **309**，pytest 数字一致；
 另跑了真配置冒烟（`XIAOYU_BODY_ENABLED=1` 喂五帧 gaze，角度正确），
 脚本 `.scratch/_smoke_body.py`。
+
+### A 档 · 小智设备协议适配层（2026-09-19 开工，全程离线）
+
+板子还没到，但协议是**有文档的** —— 所以按
+[`docs/xiaozhi拆解.md`](docs/xiaozhi拆解.md) §6：**先从 §2.2.1「第一批交付物」开工**，
+那一批 5 个文件不需要硬件、不需要联网，假客户端就能单测。
+
+**第 1/5 步 · 真样本 fixture（本次完成）**
+
+- 新增 `tests/fixtures/xiaozhi/`：**22 个 JSON 样本 + 1 个 README 溯源表**
+  （`device/` 7 个 = 设备发给我们、`server/` 14 个 = 我们要回给设备）。
+- **全部逐字抄自**上游 [`78/xiaozhi-esp32`](https://github.com/78/xiaozhi-esp32)（MIT）的
+  `docs/websocket_zh.md`。抓取用 `Invoke-WebRequest`（本机 `curl.exe` 到 GitHub 被挡），
+  快照 sha256 `d5791528bc41b507dd9b3703da1992190c8436559f2b0afdcc7e78acabdc5c32`、
+  18021 字节；快照留在 `.scratch/xiaozhi/`（已 gitignore，没进仓库）。
+- **「不是自己编的」有硬证据**：生成脚本对每个文件先断言
+  `assert body in 文档原文`，对不上就生成失败；再断言是合法 JSON、
+  `type` 非空（文档 §8.6：缺 `type` 设备端只记日志不执行）。README 里逐文件
+  列了出处（§几）+ 字节数 + sha256 前 12 位，将来能复核。
+- **两处刻意的多样性，别当重复删掉**：① 紧凑 / 缩进两种写法（`*_compact.json`）——
+  JSON 不在乎空白，解析器两种都得认；② 有 / 无 `session_id`（`*_no_session.json`，出自
+  文档 §6 的状态流转示例）—— 不能因为缺这个字段就炸。
+- **没做成 fixture 的两处（别以为是漏了）**：文档 §8.6 的 `{"type": ...}` 是**占位符、
+  不是合法 JSON**；§3.2/§3.3 的二进制协议 v2/v3 是 C 结构体描述、不是 JSON 样本
+  （第一版只走 §3.1：裸 Opus 数据）。坏 JSON / 缺字段的用例由协议测试自己构造并引 §8.6。
+- **一条前提要记住**：文档开头自己写着「该文档仅基于所提供的代码推断，实际部署时可能需要
+  结合服务器端实现进行进一步确认」。所以板子到了以后，第一件事是**抓一次真机 hello 原文**
+  跟 `device/device_hello*.json` 对一下；不一致**以真机为准**，回来更新 fixture。
+
+**下一步（一次只做一个文件，做完停下来给用户看）**：`xiaoyu/xiaozhi/protocol.py` ——
+纯函数：解析 device `hello`（`version`/`transport`/`audio_params`/`features`）、构造 server
+`hello`（带 `session_id`、`audio_params` 24000Hz）、文本帧 JSON 编解码、binary(Opus) 与
+text(JSON) 的判定；坏 JSON / 缺字段 / 版本不符要返回明确错误，**不许抛到调用方炸掉**。
+
+**验证**：`py -3.11 -m unittest discover tests` 与 `py -3.11 -m pytest tests -q`
+都是 **309**（fixture 是数据不是测试，数字不动，两个数字一致）。
 
 ### 下一步方向（用户 2026-09-18 定，按此顺序）
 

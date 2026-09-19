@@ -1,0 +1,21 @@
+{
+     "type": "hello",
+     "version": 1,
+     "features": {
+       "mcp": true,
+       "glyph_push": true
+     },
+     "text_font": {
+       "bundle": "noto-v1",
+       "charset": "common",
+       "size": 20,
+       "bpp": 4
+     },
+     "transport": "websocket",
+     "audio_params": {
+       "format": "opus",
+       "sample_rate": 16000,
+       "channels": 1,
+       "frame_duration": 60
+     }
+   }

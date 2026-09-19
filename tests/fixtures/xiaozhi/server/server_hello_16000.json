@@ -1,0 +1,9 @@
+{
+     "type": "hello",
+     "transport": "websocket",
+     "session_id": "xxx",
+     "audio_params": {
+       "format": "opus",
+       "sample_rate": 16000
+     }
+   }

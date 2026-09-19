@@ -4,6 +4,9 @@
 *.py   text eol=lf
 *.md   text eol=lf
 *.txt  text eol=lf
+# fixture 的 sha256 写在 tests/fixtures/xiaozhi/README.md 里。检出时若被换成 CRLF，
+# 那些 hash 和字节数就全对不上了 —— 锁成 LF，README 里记的才可复核
+*.json text eol=lf
 *.sh   text eol=lf
 # 网页类也用 LF：face/index.html 之前没规则，core.autocrlf=true 会把工作区
 # 改回 CRLF，跟 .py/.md 不一致，每次重新检出都冒一个假 diff

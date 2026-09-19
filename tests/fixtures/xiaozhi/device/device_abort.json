@@ -1,0 +1,5 @@
+{
+       "session_id": "xxx",
+       "type": "abort",
+       "reason": "wake_word_detected"
+     }

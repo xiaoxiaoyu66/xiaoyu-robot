@@ -1,0 +1,7 @@
+{
+       "session_id": "xxx",
+       "type": "custom",
+       "payload": {
+         "message": "自定义内容"
+       }
+     }
