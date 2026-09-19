@@ -47,7 +47,9 @@
 > （unittest 与 pytest 数字一致）。**同日又追加：第 2/5 步 `protocol.py` 也做完了** ——
 > 帧类型判定 / JSON 编解码 / 解析 device hello / 构造 server hello（24000），
 > 全是纯函数、解析永不抛（错误码 + detail）。测试 309 -> **364**。
-> 下一步 `xiaoyu/xiaozhi/session.py`。
+> **同日再追加：第 3/5 步 `session.py` 也做完了** —— 会话状态机（CONNECTING /
+> HANDSHAKING / LISTENING / SPEAKING / CLOSED），事件进、动作出，纯逻辑不碰网络。
+> 测试 364 -> **413**。下一步 `xiaoyu/xiaozhi/audio_codec.py`（Opus 抽象 + 假实现）。
 
 ---
 
@@ -243,6 +245,14 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   构造服务端 hello（§1.4，24 kHz）。**解析永不抛**（返回 `ParseResult` + 错误码），
   构造反向要抛（对内参数错误当场炸）。全部对着 22 个真样本断言，含 40 多条恶意输入的
   「一条都不许抛」用例。测试 309 -> **364**（两种跑法数字一致）。纯离线。
+
+- **A 档 · 小智会话状态机**（2026-09-19）：`xiaoyu/xiaozhi/session.py` + `tests/test_xiaozhi_session.py`。
+  把「设备发来的一帧一帧」翻译成「我们这边该做什么」：事件进（设备 hello / 音频帧 / 文本消息 /
+  断开 / 我们自己的 speak_end）→ 动作出（发消息 / 跑一轮 / 停止说话 / 关闭）。**`handle()` 永不抛**，
+  乱序、重复、将来新增的消息类型一律只记一笔、把状态保住（验收口径就是这个）。只对「等 hello 的
+  10 秒」计时（协议文档 §1.4 = 上游 `pdMS_TO_TICKS(10000)`），时钟可注入所以超时不用真等 10 秒。
+  49 个用例含完整「状态 × 事件」矩阵（证明不会卡死）、CLOSED 终态、垃圾输入耐受。
+  测试 364 -> **413**（两种跑法数字一致）。纯离线。
 
 ### 未验证（别当成已完成）
 

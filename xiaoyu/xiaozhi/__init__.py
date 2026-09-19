@@ -3,7 +3,7 @@
 分工（对应 docs/xiaozhi拆解.md §6 的动手顺序）：
 
     protocol.py     纯函数：帧类型判定 / JSON 编解码 / hello 的解析与构造
-    session.py      会话状态机（纯逻辑，不碰网络）        —— 还没写
+    session.py      会话状态机（纯逻辑，不碰网络）
     audio_codec.py  Opus 编解码抽象 + 假实现             —— 还没写
     server.py       最小服务端：能连上、能收发、能优雅收工 —— 还没写
 
@@ -31,21 +31,39 @@ from .protocol import (
     parse_audio_params,
     parse_device_hello,
 )
+from .session import (
+    HELLO_TIMEOUT_SECONDS,
+    Action,
+    ActionKind,
+    Event,
+    EventKind,
+    Session,
+    SessionState,
+    event_from_frame,
+)
 
 __all__ = [
     "DEFAULT_FORMAT",
     "DEFAULT_SERVER_SAMPLE_RATE",
+    "HELLO_TIMEOUT_SECONDS",
     "SUPPORTED_PROTOCOL_VERSIONS",
     "TRANSPORT_WEBSOCKET",
+    "Action",
+    "ActionKind",
     "AudioParams",
     "DeviceHello",
+    "Event",
+    "EventKind",
     "FrameKind",
     "ParseResult",
     "ProtocolError",
+    "Session",
+    "SessionState",
     "build_server_hello",
     "classify_frame",
     "decode_message",
     "encode_message",
+    "event_from_frame",
     "parse_audio_params",
     "parse_device_hello",
 ]
