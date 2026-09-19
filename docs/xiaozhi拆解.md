@@ -55,6 +55,31 @@ LLM / 记忆 / 性格 / TTS 回应。
 - 放置：新建 `xiaoyu/xiaozhi/`
 - **验收**：**喊「小柚子」→ 它用我们的记忆和性格回答 → 说到一半能打断**
 
+#### 2.2.1 第一批交付物（**不需要硬件，现在就能写**）
+
+协议是文档化的，所以**整层解析 + 会话逻辑都能先用"假客户端"写完并单测** ——
+不联网、不需要板子。板子到了只需把真实网络层接上去。
+
+| 顺序 | 文件 | 写什么 | 验收（全部离线） |
+|---|---|---|---|
+| 1 | `tests/fixtures/xiaozhi/` | 把 `docs/websocket_zh.md` 里的**真实 JSON 样本**抄成 fixture 文件 | 样本来自文档，不是自己编的 |
+| 2 | `xiaoyu/xiaozhi/protocol.py` | 纯函数：**解析**设备 `hello`（`version` / `transport` / `audio_params` / `features`）、**构造**服务端 `hello`（带 `session_id`、`audio_params` 24000Hz）、文本帧 JSON 的编解码、**binary(Opus) 与 text(JSON) 的判定** | 对着 fixture 断言字段；坏 JSON / 缺字段 / 版本不符 → 返回明确错误，**不许抛到调用方炸掉** |
+| 3 | `xiaoyu/xiaozhi/session.py` | **会话状态机**（纯逻辑，不碰网络）：`connecting → handshaking → listening → speaking → closed`，事件驱动（device_hello / audio_frame / text_message / closed） | 单测走一遍正常流转 + 乱序消息 + 超时 + 中途断线，**状态不许卡死** |
+| 4 | `xiaoyu/xiaozhi/audio_codec.py` | **Opus 编解码的抽象 + 假实现**（真实现等装依赖时再换）—— 和 `xiaoyu/body/` 一个套路：接口先定，行为代码不认具体库 | 假实现能跑通单测；真依赖（`opuslib` / `pyogg` / 调 ffmpeg）**单独一步**，装完立刻补最小单测 |
+| 5 | `xiaoyu/xiaozhi/server.py` | 最小服务端：**只做到"能连上、能收发、能优雅收工"**（回声/固定应答），先不接 LLM | 用假客户端连上去能收到应答；断开时不留悬挂任务 |
+
+**动手时的硬约束**（项目铁律，别破例）：
+
+- 禁止 `print()`，一律 `logger = get_logger(__name__)`
+- **不许动 `app.py` 的现有语音链路** —— 这一批全是新文件，加完不影响老功能
+- 每写完一个文件就跑测试：`py -3.11 -m unittest discover tests` 与
+  `py -3.11 -m pytest tests -q`，**两个数字必须一致**（当前基线 309）
+- 改完 commit + push；进度写回 `HANDOFF.md` 和 `TODO.md`
+- 拿不准协议细节就**去仓库读原文**（`docs/websocket_zh.md`），别猜
+
+**第二批（等板子到）**：接我们的 `llm/client.py` + `memory/*` + `tts/*` → 端到端 →
+能打断 → 最后用一个开关接进 `app.py`（默认关）。
+
 ### 2.3 把唤醒词换成「小柚子」
 S3 支持 MultiNet 自定义唤醒词（拼音输入），我们 PC 端 KWS 现在用的词就是「小柚子」
 （`config/keywords.txt`）。
