@@ -25,13 +25,23 @@
 反过来，**构造是我们自己的代码在调用，参数错了就抛**（早失败）—— 见 `encode_message`
 和 `build_server_hello`。这两条不矛盾：一个面对外部输入，一个面对自己的 bug。
 
-## 版本号（文档里有两处，别被绕进去）
+## 版本号（已拿上游源码核对过，不再是猜的）
 
-协议文档有两处 "version"：一是 hello 消息体内的 `version` 字段（§2 说它和
-`Protocol-Version` 请求头一致），二是 §3 里"配置中的 version 字段"决定二进制协议
-版本（1/2/3）。文档没说清是不是同一个数，**第一版按同一处理解**：只接受 `1`
-（§3.1：直接发裸 Opus 数据、无额外元数据），2/3 明确报 `unsupported_version`。
-板子到了抓一次真机 hello 对一遍，不一致以真机为准（同 fixture README 里那条）。
+`version` **就是一个数**，身兼三职：`Protocol-Version` 请求头、hello 消息体里的
+`version`、以及二进制帧格式的选择。依据是上游源码（2026-09-19 实读
+`main/protocols/websocket_protocol.h` / `.cc`）：
+
+    websocket_protocol.h : int version_ = 1;              # 默认版本 1
+    websocket_protocol.cc: SetHeader("Protocol-Version", std::to_string(version_))
+                           cJSON_AddNumberToObject(root, "version", version_)   # hello
+                           if (version_ == 2) {...} else if (version_ == 3) {...} else {裸 Opus}
+
+所以第一版**只接受 `1`**。2/3 不是"版本不兼容"这么简单 —— 它意味着二进制帧要按
+`BinaryProtocol2` / `BinaryProtocol3` 的结构体切（协议文档 §3.2 / §3.3），
+那是单独一件事，现在明确报 `unsupported_version`。
+
+⚠️ 这是 `main` 分支的源码，**跟我们要刷的那个固件版本可能不同** ——
+板子到了仍要抓一次真机 hello 复核，不一致以真机为准（同 fixture README 里那条）。
 """
 
 from __future__ import annotations
