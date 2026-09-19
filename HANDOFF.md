@@ -49,7 +49,11 @@
 > 全是纯函数、解析永不抛（错误码 + detail）。测试 309 -> **364**。
 > **同日再追加：第 3/5 步 `session.py` 也做完了** —— 会话状态机（CONNECTING /
 > HANDSHAKING / LISTENING / SPEAKING / CLOSED），事件进、动作出，纯逻辑不碰网络。
-> 测试 364 -> **413**。下一步 `xiaoyu/xiaozhi/audio_codec.py`（Opus 抽象 + 假实现）。
+> 测试 364 -> **413**。**同日再追加：第 4/5 步 `audio_codec.py` 也做完了** ——
+> Opus 的接口 + 假实现（原样透传 + 记账）；真依赖（opuslib / pyogg / ffmpeg）
+> 仍是单独一步。把 Opus 的硬约束钉成表：22050（**我们 Matcha / Piper 的输出**）
+> 和 30ms 这种"看着挺合理"的值一律当场报错，不许凑合。测试 413 -> **475**。
+> 下一步 `xiaoyu/xiaozhi/server.py` —— **这个要等板子**（真连上、真收发）。
 
 ---
 
@@ -153,8 +157,8 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 251 个，全过）
-python -m pytest tests                   # 同一批用例，数字必须一致（也是 251）
+python -m unittest discover tests        # 跑测试（当前 475 个，全过）
+python -m pytest tests                   # 同一批用例，数字必须一致（也是 475）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --wake-report           # 按天统计唤醒次数（误唤醒率有数，S5.5）
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
@@ -253,6 +257,18 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   10 秒」计时（协议文档 §1.4 = 上游 `pdMS_TO_TICKS(10000)`），时钟可注入所以超时不用真等 10 秒。
   49 个用例含完整「状态 × 事件」矩阵（证明不会卡死）、CLOSED 终态、垃圾输入耐受。
   测试 364 -> **413**（两种跑法数字一致）。纯离线。
+
+- **A 档 · Opus 编解码抽象层**（2026-09-19）：`xiaoyu/xiaozhi/audio_codec.py` + `tests/test_xiaozhi_audio_codec.py`。
+  接口（`OpusCodec`）+ 假实现（`FakeOpusCodec`，原样透传 + 记账）+ **唯一接线点**
+  `create_opus_codec()` —— 跟 `xiaoyu/body/servo.py` 一个套路，行为代码不认识 `opuslib`。
+  默认**拒绝**交出假货（`CodecUnavailableError`），要假货得显式 `allow_fake=True`：
+  假货是透传的，接上真板子只会听到噪音，不能让它悄悄溜进去。
+  把 Opus 的硬约束（RFC 6716：8/12/16/24/48kHz，2.5/5/10/20/40/60ms）钉成了表，
+  表外的参数当场抛 —— 最值钱的一条是 **22050**：我们自己的 Matcha / Piper 就是这个
+  采样率，Opus 不收，走那两个引擎必须先重采样。`decode()` 永不抛（上行是网络来的，
+  垃圾包返回空 + 记账），`encode()` 要抛（帧长切不齐是我们自己的 bug）。
+  62 个用例，含跟真样本对表（设备 hello 一帧 1920 字节 / 下行 24000 一帧 2880 字节）。
+  测试 413 -> **475**（两种跑法数字一致）。纯离线、不装任何音频库。
 
 ### 未验证（别当成已完成）
 
