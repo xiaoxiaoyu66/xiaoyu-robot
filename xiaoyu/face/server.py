@@ -15,19 +15,29 @@ from __future__ import annotations
 import asyncio
 import threading
 from collections.abc import Callable
+from pathlib import Path
 
 from ..config import FaceConfig
 from ..logger import get_logger
-from . import protocol
+from . import protocol, static
 
 logger = get_logger(__name__)
+
+# 心跳间隔（B 阶段）。页面那边超过 15 秒收不到任何消息（含心跳）就重连，
+# 所以这里必须显著小于 15 秒，留够抖动余量。
+HEARTBEAT_SECONDS = 5.0
 
 
 class FaceServer:
     """状态 / 口型 / 字幕的广播站 + 触屏打断的接收站。"""
 
-    def __init__(self, config: FaceConfig) -> None:
+    def __init__(self, config: FaceConfig, web_root: Path | None = None) -> None:
         self._config = config
+        # face/ 目录：给了就顺带用 HTTP 伺服它，平板开 http://<主机IP>:8765/ 就是脸
+        self._web_root = web_root
+        # 最近一次状态。新脸连上时补推一次，不然它要干等到"下一次状态变化"
+        # 才知道现在是什么状态（平板挂起重连就是这个场景）。
+        self._last_state: str | None = None
         self._clients: set = set()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
@@ -64,10 +74,10 @@ class FaceServer:
             )
             return
         logger.info(
-            "表情脸服务已启动 | 端口 {} | 浏览器打开 face/index.html?token={} "
-            "（同一 WiFi 的设备把 localhost 换成本机 IP）",
+            "表情脸服务已启动 | 平板 / 浏览器打开 http://<本机IP>:{} "
+            "（同一 WiFi 的平板把 IP 换成这台机器的；本机直接 http://localhost:{}）",
             self._config.port,
-            self._config.token,
+            self._config.port,
         )
 
     def _run(self) -> None:
@@ -84,12 +94,19 @@ class FaceServer:
         # 关服务器、等它真关上，再让循环自然退出。
         async def serve() -> None:
             server = await websockets.serve(
-                self._handle, self._config.host, self._config.port
+                self._handle,
+                self._config.host,
+                self._config.port,
+                # 同一个端口既接 WebSocket、也发网页（B 阶段）
+                process_request=self._process_request,
             )
             self._bound.set()
+            heartbeat = asyncio.create_task(self._heartbeat())
             try:
                 await self._stop_requested
             finally:
+                heartbeat.cancel()
+                await asyncio.gather(heartbeat, return_exceptions=True)
                 server.close()
                 await server.wait_closed()
 
@@ -142,6 +159,57 @@ class FaceServer:
         if fut is not None and not fut.done():
             fut.set_result(None)
 
+    # ---------------- HTTP：网页和 WebSocket 共用一个端口（B 阶段） ----------------
+
+    def _process_request(self, connection, request):
+        """握手是 WebSocket 就放行，其余请求当普通网页伺服。
+
+        为什么合成一个端口：平板只要打开 `http://<主机IP>:8765/`，
+        页面里的 location.hostname 天然就是主机地址 —— 配对零操作，
+        也不用旁边再起一个 `python -m http.server 8080`（那个重启就没了）。
+        """
+        if (request.headers.get("Upgrade") or "").lower() == "websocket":
+            return None
+        return self._http_response(request)
+
+    def _http_response(self, request):
+        """静态文件的 HTTP 响应；文件不在就是 404。"""
+        from websockets.datastructures import Headers
+        from websockets.http11 import Response
+
+        root = self._web_root
+        found = static.resolve(root, request.path) if root is not None else None
+        if found is None:
+            body = b"not found"
+            return Response(
+                404, "Not Found", Headers([("Content-Length", str(len(body)))]), body
+            )
+
+        content_type, body = found
+        if content_type.startswith("text/html"):
+            # 把真 token 填进页面：平板不用记 ?token=...
+            body = static.with_token(body, self._config.token)
+        headers = Headers(
+            [
+                ("Content-Type", content_type),
+                ("Content-Length", str(len(body))),
+                # 平板常年开着，别缓存住旧版本 —— 改了脸刷新就看见
+                ("Cache-Control", "no-store"),
+            ]
+        )
+        return Response(200, "OK", headers, body)
+
+    async def _heartbeat(self) -> None:
+        """闲置时定期发个空包，让页面能自己发现假死。
+
+        主控待机时一句话都不发，页面分不清"安静"和"断线"：实测平板挂起浏览器后，
+        脸还在屏幕上画着，其实连接早断了，要等 50 多秒才接回。
+        """
+        while True:
+            await asyncio.sleep(HEARTBEAT_SECONDS)
+            if self._clients:
+                await self._broadcast(protocol.encode(protocol.tick_message()))
+
     # ---------------- 接收（脸 -> 主控） ----------------
 
     async def _handle(self, websocket) -> None:
@@ -156,6 +224,7 @@ class FaceServer:
 
         self._clients.add(websocket)
         logger.info("表情脸已连接（当前 {} 张脸）", len(self._clients))
+        await self._send_current_state(websocket)
         try:
             async for raw in websocket:
                 if protocol.parse_command(raw):
@@ -172,6 +241,21 @@ class FaceServer:
             self._clients.discard(websocket)
             logger.info("表情脸断开（还剩 {} 张脸）", len(self._clients))
 
+    async def _send_current_state(self, websocket) -> None:
+        """刚连上先把当前状态推一次。
+
+        不推的话，新脸要等到"下一次状态变化"才知道现在什么状态：
+        平板挂起后重连时主控多半在待机，屏幕上就永远停在"连接中"。
+        """
+        if self._last_state is None:
+            return
+        try:
+            await websocket.send(
+                protocol.encode(protocol.state_message(self._last_state))
+            )
+        except Exception:
+            logger.debug("给新连上的脸补推状态失败", exc_info=True)
+
     # ---------------- 打断查询（主控用） ----------------
 
     def interrupted(self) -> bool:
@@ -184,6 +268,8 @@ class FaceServer:
     # ---------------- 发送（主控 -> 脸） ----------------
 
     def publish_state(self, state: str) -> None:
+        # 记下来，给之后连上的脸补推
+        self._last_state = state
         self._publish(protocol.state_message(state))
 
     def publish_mouth(self, level: float) -> None:

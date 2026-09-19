@@ -118,7 +118,9 @@ def attach_face(settings: Settings, state: StateMachine, synthesizer):
         logger.exception("表情脸模块加载失败，本次不启用")
         return None
 
-    face = FaceServer(settings.face)
+    # web_root：顺带用 HTTP 发 face/ 目录 —— 平板打开 http://<主机IP>:8765/ 就是脸，
+    # 不用在旁边再起一个 http.server，也不用手输 IP（B 阶段）
+    face = FaceServer(settings.face, web_root=settings.paths.root / "face")
     face.on_interrupt = synthesizer.interrupt
     try:
         face.start()

@@ -2,7 +2,16 @@
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+<!-- 主控伺服这个页面时会把真 token 填进来（见 xiaoyu/face/static.py），
+     所以平板只要打开 http://<主机IP>:8765/ 就行，不用带任何参数 -->
+<meta name="xiaoyu-token" content="">
+<!-- 加到平板主屏幕后按全屏 App 起 —— 这是"去掉浏览器顶上那条"的正解 -->
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="theme-color" content="#f7f3ec">
+<link rel="icon" href="data:,">
 <title>小柚子</title>
 <style>
   html, body {
@@ -11,14 +20,27 @@
     font-family: "PingFang SC", "Microsoft YaHei", sans-serif;
     overflow: hidden;
     -webkit-tap-highlight-color: transparent;
+    user-select: none; -webkit-user-select: none;
   }
-  #wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
-  canvas { touch-action: none; cursor: pointer; }
+  /* 脸占满整块屏，字幕和状态浮在上面 —— 平板上要像台设备，不能像张网页 */
+  #wrap { position: relative; height: 100%; }
+  canvas {
+    position: absolute; transform: translate(-50%, -50%);
+    touch-action: none; cursor: pointer; display: block;
+    transition: filter .4s ease, opacity .4s ease;
+  }
+  /* 断线必须看得出来：脸还在画着、其实早断了，这台设备就等于瘫了（B 阶段实测踩到） */
+  body.offline canvas { filter: grayscale(1) opacity(.35); }
   #caption {
-    min-height: 1.6em; font-size: 20px; color: #4a443c;
-    max-width: 80vw; text-align: center; line-height: 1.5;
+    position: absolute; left: 50%; bottom: 3vh; transform: translateX(-50%);
+    max-width: 86vw; text-align: center; line-height: 1.5;
+    font-size: clamp(15px, 2.2vh, 28px); color: #4a443c;
   }
-  #status { font-size: 13px; color: #94897c; display: flex; align-items: center; gap: 6px; }
+  #status {
+    position: absolute; top: 1.6vh; right: 3vw;
+    display: flex; align-items: center; gap: 6px;
+    font-size: 12px; color: #94897c; opacity: .55;
+  }
   #dot { width: 10px; height: 10px; border-radius: 50%; background: #d9534f; transition: background .3s; }
   #dot.on { background: #5cb85c; }
 </style>
@@ -30,17 +52,50 @@
   <div id="status"><span id="dot"></span><span id="statusText">连接中……</span></div>
 </div>
 <script>
-// ---------- 连接参数：?token=xxx 覆盖，默认 xiaoyu ----------
+// ---------- 连接参数 ----------
+// 主控发这个页面时会把真 token 填进 meta，所以平板直接开 http://<主机IP>:8765/ 就行。
+// 想手动指定也还支持：?token=xxx&host=1.2.3.4&port=8765
 const qs = new URLSearchParams(location.search);
-const TOKEN = qs.get("token") || "xiaoyu";
+const tokenMeta = document.querySelector('meta[name="xiaoyu-token"]');
+const TOKEN = qs.get("token") || (tokenMeta && tokenMeta.content) || "xiaoyu";
 const HOST = qs.get("host") || location.hostname || "localhost";
-const PORT = qs.get("port") || "8765";
+// 页面由主控自己发的时候，端口就是当前端口 —— 以后换端口不用动页面
+const PORT = qs.get("port") || location.port || "8765";
+const SCHEME = location.protocol === "https:" ? "wss" : "ws";
 
 const canvas = document.getElementById("face");
 const ctx = canvas.getContext("2d");
 const captionEl = document.getElementById("caption");
 const dotEl = document.getElementById("dot");
 const statusEl = document.getElementById("statusText");
+
+// ---------- 画布尺寸 ----------
+// 这张脸是按 520x420 画的：面板、眼睛、嘴全是这个坐标系里的绝对像素。
+// 所以不去重写几何，而是把整块画布缩放 —— 平板上眼睛跟着一起变大，高 DPI 也不糊。
+// （原来是写死的 520x420 居中，平板上只有中间一小块，字和眼睛都显小。）
+const BASE_W = 520, BASE_H = 420;
+let viewScale = 1;
+
+function resize() {
+  const pad = 0.03;      // 贴边会被平板的圆角 / 黑边切到
+  const band = 0.14;     // 底下留给字幕的一条带子，别压到脸上
+  const availW = window.innerWidth * (1 - pad * 2);
+  const availH = window.innerHeight * (1 - pad * 2 - band);
+  const scale = Math.max(0.2, Math.min(availW / BASE_W, availH / BASE_H));
+  const dpr = window.devicePixelRatio || 1;
+  viewScale = scale * dpr;
+  canvas.width = Math.round(BASE_W * viewScale);
+  canvas.height = Math.round(BASE_H * viewScale);
+  canvas.style.width = (BASE_W * scale) + "px";
+  canvas.style.height = (BASE_H * scale) + "px";
+  canvas.style.left = (window.innerWidth / 2) + "px";
+  // 位置对着屏幕中心，availH 只用来限制大小 —— 竖屏时宽度才是瓶颈，
+  // 按 availH 居中会让脸明显偏上（实测 800x1280 下偏了 90px）
+  canvas.style.top = (window.innerHeight / 2) + "px";
+}
+resize();
+window.addEventListener("resize", resize);
+window.addEventListener("orientationchange", resize);
 
 // ---------- 状态 ----------
 // 表情基准：用户从 A/B/C 三版稿里选的 A 版（Vector 风 LCD 豆眼）。
@@ -68,19 +123,33 @@ const LABEL = {
 };
 
 // ---------- WebSocket ----------
+const RETRY_MS = 1000;     // 重连间隔（原来是 3 秒 —— 平板挂起后要等 50 多秒才接回）
+const STALE_MS = 15000;    // 这么久没收到主控任何消息（含心跳）= 这条连接已经死了
 let ws = null;
 let retryTimer = null;
+let lastMsgAt = 0;
+
+function setOnline(on) {
+  dotEl.classList.toggle("on", on);
+  // 断线时把脸调灰调暗：屏幕上"还画着最新一帧"最容易骗人
+  document.body.classList.toggle("offline", !on);
+}
 
 function connect() {
-  const url = `ws://${HOST}:${PORT}/?token=${encodeURIComponent(TOKEN)}`;
+  if (ws && (ws.readyState === WebSocket.CONNECTING || ws.readyState === WebSocket.OPEN)) return;
+  const url = `${SCHEME}://${HOST}:${PORT}/?token=${encodeURIComponent(TOKEN)}`;
   ws = new WebSocket(url);
   ws.onopen = () => {
-    dotEl.classList.add("on");
+    lastMsgAt = Date.now();
+    setOnline(true);
     statusEl.textContent = `已连接 ${HOST}:${PORT}`;
+    keepAwake();
   };
   ws.onmessage = (ev) => {
+    lastMsgAt = Date.now();
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
+    if (msg.type === "tick") return;    // 心跳：只用来刷新"这条连接还活着"
     if (msg.type === "state") {
       state = LABEL[msg.state] ? msg.state : "idle";
       if (state !== "speaking") mouthTarget = 0;
@@ -102,15 +171,36 @@ function connect() {
     }
   };
   ws.onclose = () => {
-    dotEl.classList.remove("on");
-    statusEl.textContent = "断了，3 秒后重连……";
+    setOnline(false);
+    statusEl.textContent = "断了，重连中……";
+    captionEl.textContent = "";
     state = "error";
     clearTimeout(retryTimer);
-    retryTimer = setTimeout(connect, 3000);
+    retryTimer = setTimeout(connect, RETRY_MS);
   };
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 connect();
+
+// 平板把浏览器挂起时，JS 定时器跟着一起冻住 —— 醒来时那个"3 秒后重连"早过期了。
+// 所以每次页面重新可见 / 网络恢复，都主动踢一脚，不等定时器。
+function poke() {
+  if (!ws || ws.readyState === WebSocket.CLOSED || ws.readyState === WebSocket.CLOSING) connect();
+}
+
+// 平板常亮。注意 navigator.wakeLock 要求安全上下文（https 或 localhost）：
+// 平板上用 http://192.168.x.x 打开时它直接失效，屏幕会自己熄 ——
+// 所以平板的息屏设置必须改成"永不"（或换 Fully Kiosk 这类自带常亮的浏览器）。
+function keepAwake() {
+  if (!("wakeLock" in navigator)) return;
+  navigator.wakeLock.request("screen").catch(() => {});
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "visible") { resize(); keepAwake(); poke(); }
+});
+window.addEventListener("online", poke);
+window.addEventListener("focus", poke);
 
 // 点脸 = 打断（说的时候点才有意义，主控自己判断）
 canvas.addEventListener("pointerdown", () => {
@@ -118,17 +208,6 @@ canvas.addEventListener("pointerdown", () => {
     ws.send(JSON.stringify({ type: "interrupt" }));
   }
 });
-
-// 平板常亮（笔记本上无效也无妨）
-if ("wakeLock" in navigator) {
-  const keepAwake = async () => {
-    try { await navigator.wakeLock.request("screen"); } catch {}
-  };
-  keepAwake();
-  document.addEventListener("visibilitychange", () => {
-    if (document.visibilityState === "visible") keepAwake();
-  });
-}
 
 // ---------- 工具 ----------
 // 圆角 bean（Vector 的眼睛）。参数 y 是眼睛的**中心**，不是上边缘。
@@ -194,9 +273,22 @@ const MOUTH = { happy: "smile", angry: "frown", sad: "frown", surprised: "o" };
 
 // ---------- 画脸 ----------
 function draw() {
-  const W = canvas.width, H = canvas.height;
+  // 画布可能被缩放过（平板 / 高 DPI），这里把坐标系复位回 520x420 的设计尺寸 ——
+  // 下面的几何全是按它写死的
+  ctx.setTransform(viewScale, 0, 0, viewScale, 0, 0);
+  const W = BASE_W, H = BASE_H;
   const cx = W / 2, cy = H / 2 - 10;
   ctx.clearRect(0, 0, W, H);
+
+  // 假死检测：主控每 5 秒一个心跳，超过 15 秒没消息就当它断了。
+  // 以前这种情况屏幕上看不出来 —— 脸还在动，其实早就不连了。
+  if (ws && ws.readyState === WebSocket.OPEN && lastMsgAt &&
+      Date.now() - lastMsgAt > STALE_MS) {
+    setOnline(false);
+    statusEl.textContent = "连接卡住了，重连中……";
+    state = "error";
+    try { ws.close(); } catch {}
+  }
 
   // 呼吸：待机时整张脸轻轻起伏
   const breathe = state === "idle" ? 1 + Math.sin(Date.now() / 900) * 0.006 : 1;
@@ -223,7 +315,7 @@ function draw() {
   if (HALO[m] && k > 0.05) {
     ctx.save();
     ctx.shadowColor = HALO[m] + 0.55 * k + ")";
-    ctx.shadowBlur = 40 * k;
+    ctx.shadowBlur = 40 * k * viewScale;   // 同上：光环也要跟着缩放
     rr(60, 40, W - 120, H - 80, 38);
     ctx.strokeStyle = HALO[m] + 0.8 * k + ")";
     ctx.lineWidth = 3;
@@ -290,7 +382,7 @@ function draw() {
   const ex = cx - eyeW / 2, ey = cy;
   ctx.save();
   ctx.shadowColor = "rgba(241,239,232,0.38)";   // 别太散，散过头豆眼会显糊
-  ctx.shadowBlur = 14;
+  ctx.shadowBlur = 14 * viewScale;   // 阴影不吃画布缩放，得自己乘回去
   ctx.fillStyle = EYE;
   ctx.beginPath();
   beanPath(ex - 58 + lookX, ey + lookY, eyeW, eyeH);

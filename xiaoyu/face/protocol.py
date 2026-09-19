@@ -9,6 +9,8 @@
     {"type": "emotion", "mood": "happy", "intensity": 0.8}
                                                 # 情绪系统：happy/sad/angry/surprised/neutral
 
+    {"type": "tick"}                            # 心跳（B 阶段）：闲置时的空包，页面靠它判断连接还活着
+
 命令（脸 -> 主控）：
 
     {"type": "interrupt"}                        # 点了一下脸：打断当前说话/思考
@@ -65,6 +67,16 @@ def gaze_message(x: float, y: float) -> dict:
     """眼睛跟随（S6a）。x/y 各自夹到 [-1,1] 并取整 —— 与 mouth 同款洁癖。"""
     clamp = lambda v: round(max(-1.0, min(1.0, float(v))), 3)
     return {"type": "gaze", "x": clamp(x), "y": clamp(y)}
+
+
+def tick_message() -> dict:
+    """心跳（B 阶段）。
+
+    主控待机时本来就一句话都不发，页面分不清"安静"和"断线"：平板把浏览器挂起
+    之后，脸还在屏幕上画着，其实早断了（实测要 50 多秒才接回）。
+    每隔几秒来个空包，页面就能自己发现"超过 15 秒没消息 = 该重连了"。
+    """
+    return {"type": "tick"}
 
 
 def encode(payload: dict) -> str:
