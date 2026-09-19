@@ -59,7 +59,10 @@
       - [x] 第 1/5 步 · 真样本 fixture（2026-09-19）—— `tests/fixtures/xiaozhi/`
             22 个 JSON **逐字抄自** `docs/websocket_zh.md` + README 溯源表（含 sha256）。
             纯离线；测试仍 309（两种跑法一致）。
-      - [ ] 第 2/5 步 · `xiaoyu/xiaozhi/protocol.py`（解析 / 构造 / 编解码 / 帧类型判定）
+      - [x] 第 2/5 步 · `xiaoyu/xiaozhi/protocol.py`（2026-09-19）—— 帧类型判定 /
+            JSON 编解码 / 解析 device hello / 构造 server hello（24000Hz）。**解析永不抛**
+            （返回 `ParseResult` + 错误码），构造反向要抛。55 个用例（含 40 多条恶意输入
+            的「一条都不许抛」）。测试 309 → **364**（两种跑法一致）。
       - [ ] 第 3/5 步 · `xiaoyu/xiaozhi/session.py`（会话状态机，事件驱动）
       - [ ] 第 4/5 步 · `xiaoyu/xiaozhi/audio_codec.py`（Opus 抽象 + 假实现）
       - [ ] 第 5/5 步 · `xiaoyu/xiaozhi/server.py`（最小服务端：能连上 / 收发 / 优雅收工）

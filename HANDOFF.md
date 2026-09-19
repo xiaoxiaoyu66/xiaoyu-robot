@@ -44,7 +44,10 @@
 > 干起 —— 那一批**不用板子、不联网**。新增 `tests/fixtures/xiaozhi/`（22 个 JSON 真样本
 > + README 溯源表），全部**逐字抄自**上游 `78/xiaozhi-esp32` 的 `docs/websocket_zh.md`，
 > 生成时硬断言「这段文字必须在原文里」，抄错就当场失败。测试仍 **309**
-> （unittest 与 pytest 数字一致）。下一步 `xiaoyu/xiaozhi/protocol.py`。
+> （unittest 与 pytest 数字一致）。**同日又追加：第 2/5 步 `protocol.py` 也做完了** ——
+> 帧类型判定 / JSON 编解码 / 解析 device hello / 构造 server hello（24000），
+> 全是纯函数、解析永不抛（错误码 + detail）。测试 309 -> **364**。
+> 下一步 `xiaoyu/xiaozhi/session.py`。
 
 ---
 
@@ -234,6 +237,12 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   22 个 JSON 全部逐字抄自上游 `docs/websocket_zh.md`（生成时断言 `body in 原文`，
   抄错即失败），带 README 溯源表（逐文件列文档章节 + 字节数 + sha256 前 12 位）。
   **纯离线**：不碰硬件、不联网。测试仍 **309**，unittest 与 pytest 数字一致。
+
+- **A 档 · 小智协议解析层**（2026-09-19）：`xiaoyu/xiaozhi/protocol.py` + `tests/test_xiaozhi_protocol.py`。
+  帧类型判定（文本 = JSON / 二进制 = Opus）、文本帧 JSON 编解码、解析设备端 hello、
+  构造服务端 hello（§1.4，24 kHz）。**解析永不抛**（返回 `ParseResult` + 错误码），
+  构造反向要抛（对内参数错误当场炸）。全部对着 22 个真样本断言，含 40 多条恶意输入的
+  「一条都不许抛」用例。测试 309 -> **364**（两种跑法数字一致）。纯离线。
 
 ### 未验证（别当成已完成）
 
@@ -1098,13 +1107,48 @@ N100 跑不动像样的中文大模型 —— 本地小模型中文质量差、�
   结合服务器端实现进行进一步确认」。所以板子到了以后，第一件事是**抓一次真机 hello 原文**
   跟 `device/device_hello*.json` 对一下；不一致**以真机为准**，回来更新 fixture。
 
-**下一步（一次只做一个文件，做完停下来给用户看）**：`xiaoyu/xiaozhi/protocol.py` ——
-纯函数：解析 device `hello`（`version`/`transport`/`audio_params`/`features`）、构造 server
-`hello`（带 `session_id`、`audio_params` 24000Hz）、文本帧 JSON 编解码、binary(Opus) 与
-text(JSON) 的判定；坏 JSON / 缺字段 / 版本不符要返回明确错误，**不许抛到调用方炸掉**。
+**第 2/5 步 · `xiaoyu/xiaozhi/protocol.py`（本次完成）**
+
+新增 `xiaoyu/xiaozhi/`（包）+ `protocol.py`（439 行）+ `tests/test_xiaozhi_protocol.py`。
+四件事全是纯函数，**不 import websockets、不碰硬件、不联网**：
+
+| 能力 | 入口 | 协议依据 |
+|---|---|---|
+| 帧类型判定 | `classify_frame()` | §1.5：文本帧 = JSON、二进制帧 = Opus |
+| 文本帧编解码 | `decode_message()` / `encode_message()` | §4、§8.6 |
+| 解析设备 hello | `parse_device_hello()` -> `DeviceHello` | §1.3 / §4.1.1 |
+| 构造服务端 hello | `build_server_hello()` | §1.4（`session_id` + 下行 24000） |
+
+- **解析永不抛**：任何输入（None / 数字 / 坏字节 / 半截 JSON / 缺字段 / 版本不符）都返回
+  `ParseResult(value, error)`，错误带 `code` + `detail`。这条和
+  `face/protocol.py` 那个「失败返回 None」**刻意不同** —— 设备连不上时它只会说
+  「无法连接到服务」，原因必须由我们这侧讲清楚（JSON 坏了？缺字段？版本不符？）。
+  专有一组用例（`NeverRaisesTest`，40 多条恶意输入）钉死「一条都不许抛」。
+- **构造反过来要抛**：`encode_message` / `build_server_hello` 参数错了就 `raise`
+  （非 Mapping / 缺 type / session_id 为空）—— 调用方是我们自己的代码，早失败早发现。
+  一个对外、一个对内，两条规则不矛盾（docstring 里写明了理由）。
+- **帧类型只看帧类型本身**，不去 `try: json.loads` 猜内容：否则一条恰好是合法 JSON 的
+  音频帧会被当成消息；反向更糟（把 JSON 当 Opus 喂解码器）。有用例钉死这条。
+- **服务端 hello 过不了 `parse_device_hello`**：它同样 `type=hello`，但没有 `version`
+  字段（§1.4 的样本就没有）-> `missing_field`。两个方向的 hello 字段不同，有用例专门
+  记这件事，免得以后有人想拿一个函数两边用。
+- **构造结果对着文档样本逐字段相等**：`build_server_hello("xxx")` 就等于
+  `server/server_hello_24000.json` 解析出来的 dict（含 24000 / 单声道 / 60ms）。
+- **只认协议版本 1**，2/3 明确报 `unsupported_version`（第一版只走 §3.1 裸 Opus）。
+  这里有个**文档没说清的点**：hello 里的 `version` 和 §3 的「二进制协议版本」是不是同一个
+  数 —— 第一版按同一处理解，**板子到了抓真机 hello 验一次**，不一致以真机为准。
+- **可选字段不丢**：`features` / `text_font` 原样收着（§1.3 的可选扩展），缺席或 null 都给
+  默认值；`audio_params` 的 `channels` / `frame_duration` 可省（§9.2 就省了）。
+- 采样率**不做白名单校验**（设备说 16000 就是 16000）—— 写死只会让换固件时白白连不上。
+
+**下一步（一次只做一个文件，做完停下来给用户看）**：`xiaoyu/xiaozhi/session.py` ——
+会话状态机（纯逻辑，不碰网络）：`connecting -> handshaking -> listening -> speaking ->
+closed`，事件驱动（device_hello / audio_frame / text_message / closed）；单测要走一遍正常
+流转 + 乱序消息 + 超时 + 中途断线，**状态不许卡死**。
 
 **验证**：`py -3.11 -m unittest discover tests` 与 `py -3.11 -m pytest tests -q`
-都是 **309**（fixture 是数据不是测试，数字不动，两个数字一致）。
+都是 **364**（309 + 55 个新用例），两个数字一致。另跑了真样本冒烟（解析设备 hello /
+构造 -> 编码 -> 解析往返 / 六条拒绝路径），脚本 `.scratch/_smoke_xiaozhi_protocol.py`。
 
 ### 下一步方向（用户 2026-09-18 定，按此顺序）
 
