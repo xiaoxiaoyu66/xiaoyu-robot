@@ -261,6 +261,25 @@ class VisionConfig:
     model_file: str = "blaze_face_short_range.tflite"  # 在 models/vision/ 下
 
 
+@dataclass(frozen=True)
+class BodyConfig:
+    """身体（S7 准备）：舵机 / 屏幕 / 麦克风 / 喇叭的接线参数。
+
+    **默认关**：开了也只是接上假舵机往日志里打角度，不动任何硬件。
+    真舵机买回来那天，把 app.attach_body 里的 FakeServo 换成真 backend 即可，
+    行为代码一行不用改（这就是"身体接口层"的意义，见 xiaoyu/body/__init__.py）。
+
+    幅度先给小的：真舵机大角度瞬间转动像抽搐，还容易堵转发热。
+    """
+
+    enabled: bool = False
+    pan_range: float = 30.0    # gaze 满偏时头左右转多少度
+    tilt_range: float = 15.0   # 上下抬多少度（比左右小，抬头夸张很怪）
+    deadzone: float = 0.05     # 小于这个幅度当作"正中间"，防人脸检测抖动
+    invert_pan: bool = False   # 舵机左右装反了就开这个，不要改 head.py 的正负号
+    invert_tilt: bool = False
+
+
 @dataclass
 class Settings:
     paths: Paths = field(default_factory=Paths)
@@ -272,6 +291,7 @@ class Settings:
     memory: MemoryConfig = field(default_factory=MemoryConfig)
     face: FaceConfig = field(default_factory=FaceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
+    body: BodyConfig = field(default_factory=BodyConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -322,6 +342,14 @@ class Settings:
                 publish_hz=_env_int("XIAOYU_VISION_HZ") or 10,
                 smooth_alpha=_env_float("XIAOYU_VISION_ALPHA", 0.3),
                 min_confidence=_env_float("XIAOYU_VISION_CONFIDENCE", 0.5),
+            ),
+            body=BodyConfig(
+                enabled=_env_bool("XIAOYU_BODY_ENABLED", False),
+                pan_range=_env_float("XIAOYU_BODY_PAN_RANGE", 30.0),
+                tilt_range=_env_float("XIAOYU_BODY_TILT_RANGE", 15.0),
+                deadzone=_env_float("XIAOYU_BODY_DEADZONE", 0.05),
+                invert_pan=_env_bool("XIAOYU_BODY_INVERT_PAN", False),
+                invert_tilt=_env_bool("XIAOYU_BODY_INVERT_TILT", False),
             ),
         )
         settings.paths.ensure_dirs()

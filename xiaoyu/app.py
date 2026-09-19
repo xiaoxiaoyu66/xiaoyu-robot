@@ -150,12 +150,46 @@ def attach_console_face(settings: Settings, state: StateMachine, synthesizer):
     return console_face
 
 
-def attach_vision(settings: Settings, state: StateMachine, face) -> None:
+def attach_body(settings: Settings):
+    """身体（S7 准备）：现在只有假舵机 —— 把 gaze 翻译成"头该转多少度"。
+
+    默认关（XIAOYU_BODY_ENABLED=0）。开着也只是往日志里打角度，不动任何硬件。
+    真舵机买回来那天，把下面两个 FakeServo 换成真 backend 就行，
+    上层（GazeTracker / 对话 / 表情）一行不用改 —— 这就是这一层存在的理由。
+    """
+    if not settings.body.enabled:
+        return None
+    from .body import FakeServo, HeadLimits, HeadLook
+
+    head = HeadLook(
+        pan_servo=FakeServo("pan"),
+        tilt_servo=FakeServo("tilt"),
+        limits=HeadLimits(
+            pan_range=settings.body.pan_range,
+            tilt_range=settings.body.tilt_range,
+            deadzone=settings.body.deadzone,
+        ),
+        invert_pan=settings.body.invert_pan,
+        invert_tilt=settings.body.invert_tilt,
+    )
+    logger.info(
+        "身体已接上（假舵机）：左右 ±{:.0f}° / 上下 ±{:.0f}° —— 真硬件接上后换 backend",
+        settings.body.pan_range,
+        settings.body.tilt_range,
+    )
+    return head
+
+
+def attach_vision(settings: Settings, state: StateMachine, face):
     """眼睛跟随（S6a）：摄像头读人头位置 -> 脸的眼睛盯着人看。
 
     只在待机 / 听话时跑（说话时眼睛忙，不抢 CPU）；
     依赖没装、摄像头打不开、脸没启用 —— 一律静默不启用。
+
+    同一份 gaze 顺手也喂给身体（舵机）：眼睛和头同源，"眼睛动了头没动"
+    看着就像两套东西。身体默认关，没接上就是 None。
     """
+    head = attach_body(settings)
     if not settings.vision.enabled or face is None:
         return None
     try:
@@ -165,7 +199,11 @@ def attach_vision(settings: Settings, state: StateMachine, face) -> None:
         return None
 
     tracker = GazeTracker(settings.vision)
-    tracker.on_gaze = face.publish_gaze
+    tracker.on_gaze = _fanout(
+        "gaze",
+        face.publish_gaze,
+        head.look if head is not None else None,
+    )
     try:
         if not tracker.start():
             return None
