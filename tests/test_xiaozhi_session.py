@@ -528,11 +528,50 @@ class GarbageToleranceTest(SessionTestCase):
 
 
 class EventFromFrameTest(unittest.TestCase):
-    """`event_from_frame`：把 WebSocket 的一帧翻成事件（帧类型只看帧类型）。"""
+    """`event_from_frame`：把 WebSocket 的一帧翻成事件。
+
+    文本帧**不是一律** TEXT_MESSAGE —— 设备 hello 也是文本帧，但它是握手那一步
+    唯一认的信号，得单独翻成 DEVICE_HELLO。这条曾经是错的（hello 被当普通文本
+    忽略掉，会话一直卡在 CONNECTING 到 10 秒超时），下面有回归用例盯着。
+    """
 
     def test_text_frame(self):
         event = event_from_frame(_text(LISTEN_START_AUTO))
         self.assertIs(event.kind, EventKind.TEXT_MESSAGE)
+
+    def test_device_hello_text_frame_becomes_a_hello_event(self):
+        event = event_from_frame(_text(DEVICE_HELLO))
+        self.assertIs(event.kind, EventKind.DEVICE_HELLO)
+        # payload 留**原始文本** —— 解析是状态机的活，这里不替它解析
+        self.assertIsInstance(event.payload, str)
+
+    def test_hello_frame_completes_the_handshake(self):
+        """回归：hello 必须是 DEVICE_HELLO 事件，否则握手永远走不完。"""
+        session = Session(session_id=SESSION_ID)
+        actions = session.handle(event_from_frame(_text(DEVICE_HELLO)))
+        self.assertIs(session.state, SessionState.HANDSHAKING)
+        self.assertEqual([a.kind for a in actions], [ActionKind.SEND_MESSAGE])
+        self.assertEqual(session.ignored_count, 0)
+
+    def test_hello_shaped_but_invalid_still_closes_instead_of_hanging(self):
+        """自称 hello 但缺 version/transport —— 要**明确收工**，不是干等超时。"""
+        session = Session(session_id=SESSION_ID)
+        actions = session.handle(event_from_frame('{"type": "hello"}'))
+        self.assertIs(session.state, SessionState.CLOSED)
+        self.assertEqual([a.kind for a in actions], [ActionKind.CLOSE])
+
+    def test_unparseable_text_stays_a_text_message(self):
+        """坏 JSON 不该在**这里**改变事件种类 —— 它有自己的处理路径（忽略 + 记账）。"""
+        for bad in ("{not json", "[1, 2]", "null", "hello", "''"):
+            with self.subTest(bad=bad):
+                self.assertIs(event_from_frame(bad).kind, EventKind.TEXT_MESSAGE)
+
+    def test_a_bad_message_does_not_kill_the_session(self):
+        session = Session(session_id=SESSION_ID)
+        session.handle(event_from_frame(_text(DEVICE_HELLO)))
+        session.handle(event_from_frame("{not json"))
+        self.assertIs(session.state, SessionState.HANDSHAKING)
+        self.assertEqual(session.ignored_count, 1)
 
     def test_binary_frame(self):
         for payload in (b"\x01\x02", bytearray(b"\x01"), memoryview(b"\x01")):

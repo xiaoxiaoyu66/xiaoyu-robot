@@ -24,6 +24,7 @@ from __future__ import annotations
 import json
 import unittest
 from pathlib import Path
+from typing import get_type_hints
 
 from xiaoyu.xiaozhi.audio_codec import (
     BYTES_PER_SAMPLE,
@@ -293,6 +294,17 @@ class FakeOpusCodecTest(unittest.TestCase):
     def test_conforms_to_the_protocol(self):
         """行为代码只认 OpusCodec 这个形状 —— 假货也得满足它。"""
         self.assertIsInstance(self.codec, OpusCodec)
+
+    def test_the_protocol_publishes_its_params(self):
+        """驱动层要按帧长切音频，参数得从 codec 上读得到 —— 别让调用方再猜一份。
+
+        猜两份的下场是两边不一致：切帧按 16000、编码按 24000，声音变调且不报错。
+        """
+        hints = get_type_hints(OpusCodec)
+        self.assertIn("uplink", hints)
+        self.assertIn("downlink", hints)
+        self.assertEqual(self.codec.uplink.frame_bytes, 1920)
+        self.assertEqual(self.codec.downlink.frame_bytes, 2880)
 
     def test_decode_is_a_passthrough(self):
         packet = b"\xaa" * 40

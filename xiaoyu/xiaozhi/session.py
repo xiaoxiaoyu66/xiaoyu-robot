@@ -123,6 +123,16 @@ class Action:
         return self.kind.value if self.payload is None else f"{self.kind.value}({self.payload!r})"
 
 
+def _is_device_hello(data: object) -> bool:
+    """这一帧文本是不是设备 hello（协议文档 §1.3）。
+
+    解不开就当**不是** —— 坏消息有它自己的处理路径（认出来也只是被忽略），
+    别让一个坏 JSON 在这里改变事件的种类。
+    """
+    decoded = protocol.decode_message(data)
+    return decoded.ok and decoded.value.get("type") == "hello"
+
+
 def event_from_frame(data: object) -> Event:
     """WebSocket 收到的一帧 -> 事件（用 `protocol.classify_frame` 判类型）。
 
@@ -130,6 +140,12 @@ def event_from_frame(data: object) -> Event:
     """
     kind = protocol.classify_frame(data)
     if kind is protocol.FrameKind.TEXT:
+        # 设备 hello 也是文本帧，但对状态机是**独立事件**（握手只认它）。
+        # 不在这里分出来的话：hello 被当成普通文本消息忽略，会话一直卡在
+        # CONNECTING 直到 10 秒超时 —— 只有把真实帧喂进来才会发现的坑。
+        # payload 留**原始文本**，由 `_on_device_hello` 自己解析（它两种都收）。
+        if _is_device_hello(data):
+            return Event(EventKind.DEVICE_HELLO, data)
         return Event(EventKind.TEXT_MESSAGE, data)
     if kind is protocol.FrameKind.BINARY:
         return Event(EventKind.AUDIO_FRAME, data)

@@ -215,6 +215,10 @@ class OpusCodec(Protocol):
     真实现照着写这三个方法就能接上，不用改 session.py / server.py 一行。
     """
 
+    # 参数要能读出来：驱动层得按帧长切音频，不能自己再猜一份（猜两份就会不一致）
+    uplink: CodecParams
+    downlink: CodecParams
+
     def encode(self, pcm: bytes) -> bytes:
         """PCM(s16le) -> 一个 Opus 包。长度不是整帧要抛（那是我们自己的 bug）。"""
         ...

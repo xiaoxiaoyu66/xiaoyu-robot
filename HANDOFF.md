@@ -53,7 +53,10 @@
 > Opus 的接口 + 假实现（原样透传 + 记账）；真依赖（opuslib / pyogg / ffmpeg）
 > 仍是单独一步。把 Opus 的硬约束钉成表：22050（**我们 Matcha / Piper 的输出**）
 > 和 30ms 这种"看着挺合理"的值一律当场报错，不许凑合。测试 413 -> **475**。
-> 下一步 `xiaoyu/xiaozhi/server.py` —— **这个要等板子**（真连上、真收发）。
+> **同日再追加：第 5/5 步 `server.py` 也做完了**（骨架 + 假客户端）—— 传输之上那一层
+> 全定了（`Transport` / `Connection` / `FixedResponder`），真网络层（websockets）
+> 要等板子，那是**唯一**还没验过的一环。测试 475 -> **504**。
+> 至此 §2.2.1「第一批交付物」5/5 全部做完；剩下的一律等板子：真传输 + 真 Opus + 接大脑。
 
 ---
 
@@ -157,8 +160,8 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 475 个，全过）
-python -m pytest tests                   # 同一批用例，数字必须一致（也是 475）
+python -m unittest discover tests        # 跑测试（当前 504 个，全过）
+python -m pytest tests                   # 同一批用例，数字必须一致（也是 504）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --wake-report           # 按天统计唤醒次数（误唤醒率有数，S5.5）
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
@@ -269,6 +272,19 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   垃圾包返回空 + 记账），`encode()` 要抛（帧长切不齐是我们自己的 bug）。
   62 个用例，含跟真样本对表（设备 hello 一帧 1920 字节 / 下行 24000 一帧 2880 字节）。
   测试 413 -> **475**（两种跑法数字一致）。纯离线、不装任何音频库。
+
+- **A 档 · 小智最小服务端骨架**（2026-09-19）：`xiaoyu/xiaozhi/server.py` + `tests/test_xiaozhi_server.py`。
+  传输之上那一层：`Transport`（连接的最小形状）/ `FakeTransport`（假客户端）/
+  `Connection`（帧 → 事件 → 状态机 → 动作 → 帧）/ `FixedResponder`（固定应答占位）。
+  真网络层（websockets）**故意不写** —— 板子没到，写了也验不了，只会多出一份没人跑过的代码。
+  验收「断开时不留悬挂任务」：收工**只有一条路径**（正常收工 / 对端断开 / hello 超时 /
+  被取消 / 应答里抛异常，都走同一个 finally），并有测试断言 `run()` 之后没有活着的任务。
+  另有一条测试反过来钉住「握手之后不许再编超时」—— 卡住是对的，不该把用户想一会儿掐掉。
+  23 个用例。测试 475 -> **504**（两种跑法数字一致）。纯离线、不开端口、不装 websockets。
+  **顺带接出来一个真 bug**：设备 hello 是文本帧，`event_from_frame` 一律翻成 TEXT_MESSAGE，
+  状态机把它当普通文本消息忽略 —— 会话会一直卡在 CONNECTING 直到 10 秒超时。
+  已修（`event_from_frame` 认 hello），补了回归用例。这个 bug 只有把真实帧喂进来才会暴露，
+  正是这一步存在的意义。
 
 ### 未验证（别当成已完成）
 

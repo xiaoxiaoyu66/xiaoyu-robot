@@ -5,7 +5,7 @@
     protocol.py     纯函数：帧类型判定 / JSON 编解码 / hello 的解析与构造
     session.py      会话状态机（纯逻辑，不碰网络）
     audio_codec.py  Opus 编解码抽象 + 假实现（真实现＝装依赖那一步）
-    server.py       最小服务端：能连上、能收发、能优雅收工 —— 还没写
+    server.py       最小服务端：能连上、能收发、能优雅收工（真网络层＝等板子）
 
 协议原文：上游 `78/xiaozhi-esp32` 的 `docs/websocket_zh.md`；
 真样本 fixture 在 `tests/fixtures/xiaozhi/`（逐字抄自那份文档，不是编的）。
@@ -52,6 +52,14 @@ from .protocol import (
     parse_audio_params,
     parse_device_hello,
 )
+from .server import (
+    Connection,
+    FakeTransport,
+    FixedResponder,
+    Responder,
+    Transport,
+    TurnRequest,
+)
 from .session import (
     HELLO_TIMEOUT_SECONDS,
     Action,
@@ -78,16 +86,22 @@ __all__ = [
     "CodecFormatError",
     "CodecParams",
     "CodecUnavailableError",
+    "Connection",
     "DeviceHello",
     "Event",
     "EventKind",
     "FakeOpusCodec",
+    "FakeTransport",
+    "FixedResponder",
     "FrameKind",
     "OpusCodec",
     "ParseResult",
     "ProtocolError",
+    "Responder",
     "Session",
     "SessionState",
+    "Transport",
+    "TurnRequest",
     "build_server_hello",
     "bytes_per_frame",
     "check_channels",
