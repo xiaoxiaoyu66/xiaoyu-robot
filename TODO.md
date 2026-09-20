@@ -102,6 +102,19 @@
             剩下的：HTTP 口的接线（`process_request`）+ 真 Opus 依赖 + 板子实测。
             测试 504 → **557**（两种跑法一致）。
       - [ ] 第二批（等板子）· 接 LLM/记忆/TTS → 端到端 → 能打断 → 一个开关接进 app.py
+- [x] **表情资产产线（2026-09-20 搭好，不用等板子）** —— 设备端那张脸不再是"到货再说"。
+      四层：参数 `xiaoyu/face/expression.py`（(mood, 强度) → 形状参数，强度是插值，
+      所以「生气 0.3」白送一个设计稿里的「不爽」）、命名 `xiaoyu/face/assets.py`
+      （资产名 = 设备查表的 key = **文件名**；13 张 = neutral + 4 情绪 × 3 档）、
+      渲染 `xiaoyu/face/render.py`（Pillow 出 PNG + 眨眼 GIF）、
+      出图脚本 `scripts\build_face_assets.py`（`--preview` 对照图 / `--check` 核对 /
+      `--blink` 眨眼版 / `--pack` 打印打包命令）。
+      **测试 557 → 652**（`unittest` 与 `pytest` 两种跑法数字一致）。
+      产物在 `build\face_assets\`（已 gitignore，随时能重出）。
+      ⚠️ 三条留到板子到货：**emote 组件怎么铺图**（透明底 / 铺满两个变体都出了，
+      刷一次就知道）；**assets 分区里还有唤醒词模型和中文字体**（刷之前先
+      `esptool read_flash` 存一份原样）；上游 `build.py` 的 `assets_size` 写死 4MB
+      而我们是 8MB。详见 [`HANDOFF.md`](HANDOFF.md) §6.4 最后一条。
 - [x] **《小柚子是怎么实现的》全景说明** —— 2026-09-19 完成（纯文档）：
       [`docs/小柚子是怎么实现的.md`](docs/小柚子是怎么实现的.md)，给自己的版本。
       两张 mermaid 图（主流水线 / A 档拓扑，已用 mermaid 官方解析器验过语法）+
