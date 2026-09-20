@@ -41,6 +41,8 @@
       约 2 寸 LCD 脸 + 舵机手臂）。关键：我们的 Canvas 脸在 ESP32 上跑不了，所以要么
       换能跑浏览器的设备（甲），要么接受固件画脸（乙/丙）。价目表和取舍见
       [`docs/离开电脑_计划.md`](docs/离开电脑_计划.md) §4.3。**等平板真人验收之后再拍**。
+      按参考图画了一版成品概念图（正面 + 剖面装配）：
+      [`docs/design/小柚子_成品图_v1.png`](docs/design/小柚子_成品图_v1.png)。
 - [x] **身体适配 · 舵机这半边（2026-09-19 做完）** —— `xiaoyu/body/`：`ServoBackend`
       接口 + `FakeServo`（只记日志）+ `gaze(x, y)` → 转头角度（带死区/幅度/invert）。
       已接进 `attach_vision`（`XIAOYU_BODY_ENABLED=1` 才开，默认关）。真舵机买回来
