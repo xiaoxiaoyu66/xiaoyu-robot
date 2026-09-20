@@ -6,6 +6,7 @@
     session.py      会话状态机（纯逻辑，不碰网络）
     audio_codec.py  Opus 编解码抽象 + 假实现（真实现＝装依赖那一步）
     server.py       最小服务端：能连上、能收发、能优雅收工（真网络层＝等板子）
+    ota.py          OTA 配置应答（HTTP）：告诉设备往哪连 —— 它开机问的第一件事
 
 协议原文：上游 `78/xiaozhi-esp32` 的 `docs/websocket_zh.md`；
 真样本 fixture 在 `tests/fixtures/xiaozhi/`（逐字抄自那份文档，不是编的）。
@@ -60,6 +61,27 @@ from .server import (
     Transport,
     TurnRequest,
 )
+from .ota import (
+    CONFIG_VERSION,
+    CONTENT_TYPE_JSON,
+    CONTENT_TYPE_TEXT,
+    DEFAULT_WEBSOCKET_PATH,
+    OTA_PATH,
+    STATUS_BAD_REQUEST,
+    STATUS_NOT_FOUND,
+    STATUS_OK,
+    OtaConfig,
+    OtaResponse,
+    build_config,
+    device_id,
+    encode_config,
+    handle_request,
+    is_ota_path,
+    normalize_headers,
+    parse_device_info,
+    server_time,
+    websocket_url,
+)
 from .session import (
     HELLO_TIMEOUT_SECONDS,
     Action,
@@ -73,9 +95,17 @@ from .session import (
 
 __all__ = [
     "BYTES_PER_SAMPLE",
+    "CONFIG_VERSION",
+    "CONTENT_TYPE_JSON",
+    "CONTENT_TYPE_TEXT",
     "DEFAULT_FORMAT",
     "DEFAULT_SERVER_SAMPLE_RATE",
+    "DEFAULT_WEBSOCKET_PATH",
     "HELLO_TIMEOUT_SECONDS",
+    "OTA_PATH",
+    "STATUS_BAD_REQUEST",
+    "STATUS_NOT_FOUND",
+    "STATUS_OK",
     "SUPPORTED_FRAME_DURATIONS",
     "SUPPORTED_PROTOCOL_VERSIONS",
     "SUPPORTED_SAMPLE_RATES",
@@ -95,6 +125,8 @@ __all__ = [
     "FixedResponder",
     "FrameKind",
     "OpusCodec",
+    "OtaConfig",
+    "OtaResponse",
     "ParseResult",
     "ProtocolError",
     "Responder",
@@ -102,6 +134,7 @@ __all__ = [
     "SessionState",
     "Transport",
     "TurnRequest",
+    "build_config",
     "build_server_hello",
     "bytes_per_frame",
     "check_channels",
@@ -110,12 +143,20 @@ __all__ = [
     "classify_frame",
     "create_opus_codec",
     "decode_message",
+    "device_id",
+    "encode_config",
     "encode_message",
     "event_from_frame",
+    "handle_request",
+    "is_ota_path",
     "iter_pcm_frames",
     "needs_resample",
+    "normalize_headers",
     "parse_audio_params",
     "parse_device_hello",
+    "parse_device_info",
     "pcm_duration_seconds",
     "samples_per_frame",
+    "server_time",
+    "websocket_url",
 ]

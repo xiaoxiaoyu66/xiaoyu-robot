@@ -75,6 +75,19 @@
 > **纯文档，代码零改动，测试仍 504**（unittest 与 pytest 数字一致）。
 > 四份文档的分工：`到货当天_手把手.md` 管"动手"、`xiaozhi拆解.md` 管"决策边界"、
 > `A档到货开工.md` 管"给 AI 的冷启动"，这一份管"讲清楚它是什么"。
+>
+> **2026-09-20 追加（A 档 · OTA 应答层）**：新增 `xiaoyu/xiaozhi/ota.py` + 53 个用例。
+> 设备**不是**直接连 WebSocket 的 —— 它先按配网页里那个「服务端地址」发一次 HTTP
+> （上游 `Ota::CheckVersion()`），从我们的回答里取出 `websocket` 段、**逐个键写进闪存**，
+> 这才去连。所以服务端必须多开这一个 HTTP 口，光有 WebSocket 板子根本不知道往哪连。
+> 测试 504 -> **557**（两种跑法一致），纯离线、不开端口。
+> 读上游源码（`.scratch/xiaozhi/upstream/ota.cc` + `application.cc`，2026-09-20 实读）钉住三条：
+> ①**必须有 `websocket` 段** —— 少了 `application.cc:543` 会让设备退回 MQTT，
+> 而症状只是"板子没反应"，极难查；②**绝不能有 `activation` 段** —— 有 code/challenge
+> 设备就进激活循环、卡在激活界面（`application.cc:502-527`），**这条之前几份文档都没写，
+> 是这次读源码才发现的**；③ `websocket` 里的键会被**逐个写进设备闪存**，只放那三个。
+> `url` 从请求的 `Host` 头推出来 -> **零配置**（换电脑换 IP 都不用改，和 `face/static.py`
+> 让页面读 `location.hostname` 是同一个思路）。
 
 ---
 
@@ -178,8 +191,8 @@ S5 已过真人验收（豆眼 Vector 风 + 终端字符画分身）；S6a 冒�
 ```powershell
 cd 'D:\JavaAI\XiaoYu Robot'
 
-python -m unittest discover tests        # 跑测试（当前 504 个，全过）
-python -m pytest tests                   # 同一批用例，数字必须一致（也是 504）
+python -m unittest discover tests        # 跑测试（当前 557 个，全过）
+python -m pytest tests                   # 同一批用例，数字必须一致（也是 557）
 python -m xiaoyu --check                 # 环境自检
 python -m xiaoyu --wake-report           # 按天统计唤醒次数（误唤醒率有数，S5.5）
 python -m xiaoyu --text                  # 键盘模式，不碰麦克风/喇叭，验证 大模型+TTS
