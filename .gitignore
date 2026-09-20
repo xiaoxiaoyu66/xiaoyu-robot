@@ -45,3 +45,5 @@ logs/*
 .DS_Store
 Thumbs.db
 desktop.ini
+# 豆包生成的概念图原始大图（46MB），只留 docs/design/ 下的压缩版
+docs/assert/
