@@ -1396,6 +1396,14 @@ closed`，事件驱动（device_hello / audio_frame / text_message / closed）�
 活跃继任者是 `OHF-Voice/piper1-gpl`。`dscripka/openWakeWord` 2.8k stars
 且 2025-12 后没更新 —— 所以当初选 sherpa-onnx KWS 是对的，不用换。
 
+**硬件 / 外壳的参考源（不是代码仓库，没有 star 数，2026-09-21 记）**：
+
+- [立创开源广场 oshwhub.com](https://oshwhub.com) —— 用户 2026-09-21 提议以后照着设计。
+  嘉立创的开源硬件社区：项目带原理图 / PCB / BOM，元件能直接下单，
+  还有现成外壳 / 支架可抄。做"身体"（壳子、走线、舵机、屏、电源）时先来这儿翻，
+  别从零画。
+  **它管硬件，不管软件架构 —— 别拿上面的项目当代码模板抄。**
+
 ---
 
 ## 9. 给下一个 AI 的提醒
