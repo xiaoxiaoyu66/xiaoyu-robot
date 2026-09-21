@@ -1301,16 +1301,30 @@ closed`，事件驱动（device_hello / audio_frame / text_message / closed）�
 - `requirements.txt` 加了 `Pillow>=10` —— 主程序不需要它（PC 的脸是浏览器画的），
   只有出图和那批像素测试要；没装的话那批测试自己跳过。
 
-**等板子的三件事（板子到货先看这三条）**：
+**等板子的四件事（板子到货先看这四条）**：
 
-1. **emote 组件怎么铺图还不知道** —— 它是托管组件、不在主仓库里。
-   透明底和铺满两个变体都出了，刷一次固件就看得出来，比猜快。
-2. **assets 分区里不只有表情** —— 还有唤醒词模型和中文字体。只刷表情会把这两样
+1. ~~**emote 组件怎么铺图还不知道**~~ —— ✅ **2026-09-21 读上游源码查明了**。
+   原来记的"托管组件、不在主仓库里"只对一半：显示层 `main/display/emote_display.cc`
+   在主仓库里，外部的只是底层渲染组件 `expression_emote`。
+   机制是：`Display::SetEmotion(const char* 名字)` → 按名字查图；
+   `scripts/spiffs_assets/build.py` 的 `process_emoji_collection()` 遍历一个目录，
+   收 `.png` / `.gif`，**文件名去掉扩展名就是表情名**，写进 assets 分区
+   `index.json` 的 `emoji_collection` 里。CMake 侧有两个口子塞这个目录：
+   `--emoji_collection <dir>`（直接）和 `--extra_files <dir>`（上游只给 esp-hi 配了）。
+   **好消息：我们的命名规则（资产名 = 设备查表的 key = 文件名）跟上游完全一致**，
+   `build_face_assets.py --pack` 该做的就是产出这样一个目录。
+2. **`EMOTE_RESOLUTION` 是板级 CMake 变量**（新增）—— 上游默认 `"320_240"`，
+   圆屏的 echoear 是 `"360_360"`，它会作为参数传进
+   `build_speaker_assets_bin(分区, EMOTE_RESOLUTION, ...)`。
+   **我们的屏是 240x320 竖屏，跟上游默认的横屏正好反过来** ——
+   板子到了如果脸是横的、或者被裁掉一半，第一个要改的就是这里。
+3. **assets 分区里不只有表情** —— 还有唤醒词模型和中文字体。只刷表情会把这两样
    干掉，所以**动手前先 `esptool read_flash` 存一份原始 assets**，在它基础上替换。
-3. **上游 `scripts/spiffs_assets/build.py` 里 `assets_size` 写死 `0x400000`（4MB）**，
+4. **上游 `scripts/spiffs_assets/build.py` 里 `assets_size` 写死 `0x400000`（4MB）**
+   （实测位置：同文件的 `"assets_size": "0x400000"`，2026-09-21 核对过），
    而我们 `partitions/v2/16m.csv` 里 assets 是 `0x800000`（8MB）—— 打包前改那一个数字。
 
-   这三条 `scripts/build_face_assets.py --pack <xiaozhi仓库>` 会连同完整命令一起打出来。
+   这四条 `scripts/build_face_assets.py --pack <xiaozhi仓库>` 会连同完整命令一起打出来。
 
 **2026-09-21 补一条线索（不用板子也能读）**：立创开源广场的 `movecall/moji2`（见 §8）
 是个基于小智 AI 2.0 的成品，作者在 FAQ 里写明「配网后进小智 AI 后台 → 智能体设置 →
@@ -1416,7 +1430,10 @@ closed`，事件驱动（device_hello / audio_frame / text_message / closed）�
   基于小智 AI 2.0，**目前和我们最像的一个成品**：ESP32-C5 + 1.5" **圆屏 360x360 QSPI** +
   ES8311 codec + 500mAh 电池（预留无线充焊盘）+ 3D 打印壳（模型在 MakerWorld）。
   物料 ¥74.83（DIY）/ ¥104.89（标准版，含壳），作者自评难度一颗星。
-  固件仓库名 `movecall-moji2-esp32c5`。
+  **固件不是独立仓库**：2026-09-21 查证，`CONFIG_BOARD_TYPE_MOVECALL_MOJI2_ESP32C5`
+  已经合进**上游 `78/xiaozhi-esp32` 主仓库**（板型目录 `main/boards/movecall-moji2-esp32c5/`，
+  README 要求 ESP-IDF v5.5）；`movecall/xiaozhi-esp32` 是同一作者的分支仓库
+  （分支 `add-feature-moji` / `add-feature-moji2.0`）。oshwhub 页面写的那个仓库名并不存在。
   **值得借的**：成品形态（圆屏 + FPC 免焊 + 壳）、成本基准、表情机制（见 §6.4）。
   **不值得借的**：ESP32-C5（我们 S3 N16R8 已下单，且 S3 才是 xiaozhi 固件最主流的目标，
   别为它换板）；手焊屏（它自己就是因为 1.0 手焊屏太痛才改成 FPC 插接）。
