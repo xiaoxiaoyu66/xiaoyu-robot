@@ -65,7 +65,7 @@ LLM / 记忆 / 性格 / TTS 回应。
 | 1 | `tests/fixtures/xiaozhi/` | 把 `docs/websocket_zh.md` 里的**真实 JSON 样本**抄成 fixture 文件 | 样本来自文档，不是自己编的 |
 | 2 | `xiaoyu/xiaozhi/protocol.py` | 纯函数：**解析**设备 `hello`（`version` / `transport` / `audio_params` / `features`）、**构造**服务端 `hello`（带 `session_id`、`audio_params` 24000Hz）、文本帧 JSON 的编解码、**binary(Opus) 与 text(JSON) 的判定** | 对着 fixture 断言字段；坏 JSON / 缺字段 / 版本不符 → 返回明确错误，**不许抛到调用方炸掉** |
 | 3 | `xiaoyu/xiaozhi/session.py` | **会话状态机**（纯逻辑，不碰网络）：`connecting → handshaking → listening → speaking → closed`，事件驱动（device_hello / audio_frame / text_message / closed） | 单测走一遍正常流转 + 乱序消息 + 超时 + 中途断线，**状态不许卡死** |
-| 4 | `xiaoyu/xiaozhi/audio_codec.py` | **Opus 编解码的抽象 + 假实现**（真实现等装依赖时再换）—— 和 `xiaoyu/body/` 一个套路：接口先定，行为代码不认具体库 | 假实现能跑通单测；真依赖（`opuslib` / `pyogg` / 调 ffmpeg）**单独一步**，装完立刻补最小单测 |
+| 4 | `xiaoyu/xiaozhi/audio_codec.py` | **Opus 编解码的抽象 + 假实现**（真实现等装依赖时再换）—— 和 `xiaoyu/body/` 一个套路：接口先定，行为代码不认具体库 | 假实现能跑通单测；真依赖**实测只能用 PyAV**（`opuslib` / `pyogg` 在这台机器上都跑不起来，记录在 `opus_av.py` 开头），2026-09-22 已装上并接好 `AvOpusCodec` |
 | 5 | `xiaoyu/xiaozhi/server.py` | 最小服务端：**只做到"能连上、能收发、能优雅收工"**（回声/固定应答），先不接 LLM | 用假客户端连上去能收到应答；断开时不留悬挂任务 |
 
 **动手时的硬约束**（项目铁律，别破例）：
@@ -77,8 +77,19 @@ LLM / 记忆 / 性格 / TTS 回应。
 - 改完 commit + push；进度写回 `HANDOFF.md` 和 `TODO.md`
 - 拿不准协议细节就**去仓库读原文**（`docs/websocket_zh.md`），别猜
 
-**第二批（等板子到）**：接我们的 `llm/client.py` + `memory/*` + `tts/*` → 端到端 →
-能打断 → 最后用一个开关接进 `app.py`（默认关）。
+**第二批（2026-09-22 做完大半，板子还没到）**：接我们的 `llm/client.py` + `memory/*`
++ `tts/*` → 端到端 → 一个开关接进 `app.py`（默认关）—— **这三样全做完了**：
+真网络层（`ws.py`）+ OTA 的 HTTP 口（`ota.py`）+ 真 Opus（PyAV）都在，
+`py -3.11 -m xiaoyu --xiaozhi-only` 就能只跑板子这一条路。
+**只剩「能打断」和「边想边说」** —— 那两条必须等真板子才能验（现在是一轮
+ASR→LLM→TTS 全跑完才开始下发，说话期间不收帧）。
+
+> ⚠️ 定稿时这里还有一条**被实测推翻**的计划：原本打算「OTA 和 WebSocket 共用
+> 一个端口」（照 `face/server.py` 那套）。**不行** —— 上游 `ota.cc` 发的是
+> **POST + body**，而 `websockets` 的 HTTP 层碰到带 body 的请求直接关连接
+> （`websockets/http11.py`：`int(headers["Content-Length"]) != 0`）。
+> 现在是 **8766 = OTA / 8767 = WebSocket**，见 `xiaoyu/xiaozhi/ws.py` 开头「坑 4」。
+> 到货当天照 [`到货当天_测试清单.md`](到货当天_测试清单.md) 走。
 
 ### 2.3 把唤醒词换成「小柚子」
 S3 支持 MultiNet 自定义唤醒词（拼音输入），我们 PC 端 KWS 现在用的词就是「小柚子」

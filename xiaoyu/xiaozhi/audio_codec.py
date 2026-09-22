@@ -413,7 +413,7 @@ def create_opus_codec(
     假货是原样透传的，接上真板子只会听到一段噪音，而且很难查。
     （跟 `XIAOYU_BODY_ENABLED` 默认关同一个规矩 —— 假东西要显式开。）
 
-    装真依赖那一步做完之后，在这里加分支即可，其它文件一行不用动。
+    真实现走 PyAV（`opus_av.py`）—— 2026-09-22 装好依赖，在这里接上。
     """
     up = CodecParams.from_audio_params(uplink)
     down = (
@@ -428,8 +428,9 @@ def create_opus_codec(
     )
     if allow_fake:
         return FakeOpusCodec(up, down)
-    raise CodecUnavailableError(
-        "还没有真实的 Opus 实现：opuslib / pyogg / ffmpeg 都还没装。"
-        "docs/xiaozhi拆解.md §2.2.1 第 4 项把「装真依赖」单独列成一步了 —— "
-        "装完立刻补最小单测，别跳过。离线测试请显式传 allow_fake=True。"
-    )
+    # 真实现：PyAV（自带 ffmpeg + libopus）。opuslib / pyogg 在这台 Windows 上
+    # 都跑不起来，实测记录见 opus_av.py 开头。PyAV 没装时它会自己抛
+    # CodecUnavailableError（带 pip install av 那句），不用在这里再包一层。
+    from .opus_av import AvOpusCodec
+
+    return AvOpusCodec(up, down)

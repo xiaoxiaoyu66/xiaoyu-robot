@@ -95,18 +95,39 @@
             真网络层（websockets）**没写** —— 等板子，这是唯一还没验过的一环。
             23 个用例。测试 475 → **504**（两种跑法一致）。纯离线、不开端口。
             ⚠️ 顺带修掉一个"接上真帧才暴露"的 bug：hello 被当普通文本忽略，会话卡在 CONNECTING
-      - [ ] **第 5/5 步的真身**（等板子）· 真传输层（websockets）+ **HTTP 的 OTA 接口**
-            （设备先请求 OTA 地址、从回答里拿 `websocket.url`/`token` 才去连 ——
-            见 [`docs/到货当天_手把手.md`](docs/到货当天_手把手.md) §6）+ 真 Opus 依赖 + 板子实测
+      - [x] **第 5/5 步的真身**（2026-09-22 做完，**板子还没到就写完了**）·
+            真传输层 `xiaoyu/xiaozhi/ws.py`（websockets）+ OTA 的 HTTP 口 + 真 Opus（PyAV）
+            + 假设备工具 `scripts\xiaozhi_fake_device.py`
+            + 大脑接线 `xiaoyu/xiaozhi/brain.py`（transcribe / reply / synthesize / resample）
+            + `--xiaozhi-only` 开关（只跑板子这条路，不要本机的麦 / 喇叭 / 摄像头）
+            + `tests/test_xiaozhi_attach.py`（2 个用例，真起服务真连，钉住那 5 个接线点）
             ⚠️ **端口别用 8765** —— 本体（在跑浸泡验收）正占着它，撞了会干扰验收。
-            小智这层用 **8766**，HTTP 和 WebSocket 公用一个口（照 `xiaoyu/face/server.py` 那套）
+            ⚠️ **实测结论：OTA 和 WebSocket 不能共用一个端口。** 原来这里写的是
+            「HTTP 和 WebSocket 公用一个口（照 `xiaoyu/face/server.py` 那套）」—— **那是错的**，
+            脸页能同口是因为人拿浏览器点（GET、没有 body），小智设备发的是 **POST + body**
+            （上游 `ota.cc` 要把 `GetSystemInfoJson()` 报上来），而 `websockets` 的 HTTP 层
+            碰到带 body 的请求**直接关连接**（`websockets/http11.py` 里
+            `if int(headers["Content-Length"]) != 0: raise ValueError("unsupported request body")`）。
+            症状是设备侧一句 `Remote end closed connection without response`，极难查。
+            所以定成：**8766 = OTA**（标准库 `ThreadingHTTPServer`，收 POST 没问题）/
+            **8767 = WebSocket**（websockets）。设备连哪个口**由我们 OTA 应答里的
+            `websocket.url` 决定**，所以分两个口对设备毫无影响（上游默认本来就是让它连
+            另一个域名的另一个端口）。完整记录见 `xiaoyu/xiaozhi/ws.py` 开头「坑 4」。
+            同一批踩到的另外两个坑：`http.server` 的 `self.headers` 是
+            `email.message.Message`、**不是 `Mapping`**（掉进按行拆的分支 → `Host` 丢了 → OTA 回 400）；
+            `opuslib`（运行时报 `Could not find Opus library`）和 `pyogg`（没有裸编解码器）
+            在这台 Windows 上**都跑不起来**，能用的是 **PyAV：`py -3.11 -m pip install av`**。
+            测试 652 → **710**（`unittest` 与 `pytest` 两种跑法数字一致）。
       - [x] OTA 应答层（2026-09-20）· `xiaoyu/xiaozhi/ota.py` + 53 个用例 ——
             HTTP 口那一半**不用等板子就写完了**（纯逻辑：给一条请求、返回一条应答）。
             `url` 从 `Host` 头推、零配置；⚠️ 上游源码钉死两条：**必须有 `websocket` 段**
             （少了设备会退回 MQTT）、**绝不能有 `activation` 段**（有就卡在激活界面）。
             剩下的：HTTP 口的接线（`process_request`）+ 真 Opus 依赖 + 板子实测。
             测试 504 → **557**（两种跑法一致）。
-      - [ ] 第二批（等板子）· 接 LLM/记忆/TTS → 端到端 → 能打断 → 一个开关接进 app.py
+      - [ ] 第二批的尾巴（**等板子**）· 能打断（说一半改口）+ 边想边说（现在是一轮
+            ASR->LLM->TTS 全跑完才开始下发）+ **板子实测**。LLM/记忆/TTS 接线、
+            `--xiaozhi-only` 开关、假设备工具都已就位 —— 差的就是一块真板子。
+            到货那天照着 [`docs/到货当天_测试清单.md`](docs/到货当天_测试清单.md) 走。
 - [x] **表情资产产线（2026-09-20 搭好，不用等板子）** —— 设备端那张脸不再是"到货再说"。
       四层：参数 `xiaoyu/face/expression.py`（(mood, 强度) → 形状参数，强度是插值，
       所以「生气 0.3」白送一个设计稿里的「不爽」）、命名 `xiaoyu/face/assets.py`

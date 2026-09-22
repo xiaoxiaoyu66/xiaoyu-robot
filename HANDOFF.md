@@ -107,6 +107,49 @@
 > `--check` 核对 / `--pack` 打印打包命令）。
 > 测试 557 -> **652**（unittest 与 pytest 数字一致），纯离线。
 > 细节和「等板子的三件事」见 §6.4 最后那条。
+>
+> **2026-09-22 追加（A 档软件那一半全写完 —— 板子还没到就写完了）**：把 §2.2.1 里
+> 「等板子」的那批一次做完，并**当场验掉**：
+>
+> - `xiaoyu/xiaozhi/ws.py` —— 真网络层。**HTTP 答 OTA + WebSocket 管对话**，
+>   两个对象一起起停（`XiaozhiServer`）。
+> - `xiaoyu/xiaozhi/brain.py` —— 大脑接线：板子的一句话 → ASR → LLM + 记忆 → TTS
+>   → 下行 Opus。四个接线点（transcribe / reply / synthesize / resample）从构造参数进，
+>   所以单测里塞假货就能验接线。
+> - `py -3.11 -m xiaoyu --xiaozhi-only` —— **只跑板子这一条路**，不要本机的麦克风 /
+>   喇叭 / 摄像头。板子第一次连时用它，变量最少。
+> - `scripts\xiaozhi_fake_device.py` —— **假设备**：自己起服务、自己当设备连上去，
+>   把板子要走的每一步走一遍（POST 自述 → 拿 ws 地址 → hello → listen start → 音频
+>   → listen stop → 收下行音频）。**板子不通时，用它区分"硬件坏"还是"代码坏"**。
+> - `tests/test_xiaozhi_attach.py` —— 钉住 `attach_xiaozhi` 那 5 个接线点
+>   （ASR 拿到完整音频 / 字原样进大脑 / 回话进 TTS / 字幕和情绪流到脸上 / 声音真的下发）。
+>
+> ⚠️ **三个当场踩出来的坑（都写进代码注释了，别再重新踩）**：
+>
+> 1. **OTA 和 WebSocket 不能共用一个端口。** 原来计划照 `face/server.py` 那样同口
+>    （`websockets.serve(..., process_request=...)`）—— **那是错的**。脸页能同口是因为
+>    人拿浏览器点（GET、没有 body）；小智设备发的是 **POST + body**（上游 `ota.cc`
+>    要把 `GetSystemInfoJson()` 报上来），而 `websockets` 的 HTTP 层碰到带 body 的请求
+>    **直接关连接**（`websockets/http11.py`：
+>    `if int(headers["Content-Length"]) != 0: raise ValueError("unsupported request body")`）。
+>    症状是设备侧只留一句 `Remote end closed connection without response`，
+>    而拿浏览器 GET 同一个地址却是 200 —— "换个客户端就好"的毛病最费时间。
+>    现在定成：**8766 = OTA**（标准库 `ThreadingHTTPServer`，收 POST 没问题）/
+>    **8767 = WebSocket**。设备连哪个口**由我们 OTA 应答里的 `websocket.url` 决定**，
+>    所以分两个口对设备毫无影响（上游默认就是让它连另一个域名的另一个端口）。
+>    完整记录见 `xiaoyu/xiaozhi/ws.py` 开头「坑 4」。
+> 2. **`http.server` 的 `self.headers` 是 `email.message.Message`、不是 `Mapping`。**
+>    它有 `.items()` 但 `isinstance(..., Mapping)` 是 False → `ota.normalize_headers()`
+>    掉进按行拆的分支、遍历的是**值**，`Host` 悄悄丢掉 → OTA 回 400。
+>    已改成：有 `.items()` 就用它。
+> 3. **`opuslib` / `pyogg` 在这台 Windows 上都跑不起来。** 前者装得上但一运行就
+>    `Exception: Could not find Opus library`（没有 opus.dll）；后者里根本没有裸编解码器
+>    （只有 `OpusFile` / `OpusFileStream`，`AttributeError: no attribute 'OpusEncoder'`）。
+>    能用的是 **PyAV：`py -3.11 -m pip install av`**（自带 ffmpeg + libopus，27.6MB）。
+>    `create_opus_codec()` 已接上 `AvOpusCodec`。
+>
+> 测试 **652 -> 710**（`unittest` 与 `pytest` 两种跑法数字一致）。
+> **到货当天照 [`docs/到货当天_测试清单.md`](docs/到货当天_测试清单.md) 一步步走。**
 
 ---
 
@@ -342,6 +385,17 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
   已修（`event_from_frame` 认 hello），补了回归用例。这个 bug 只有把真实帧喂进来才会暴露，
   正是这一步存在的意义。
 
+- **A 档 · 真网络层 + 大脑接线**（2026-09-22）：`xiaoyu/xiaozhi/ws.py` +
+  `brain.py` + `tests/test_xiaozhi_ws.py` + `tests/test_xiaozhi_brain.py` +
+  `tests/test_xiaozhi_opus_av.py` + `tests/test_xiaozhi_attach.py`，外加
+  `scripts\xiaozhi_fake_device.py`（假设备工具）和 `--xiaozhi-only` 开关。
+  `ws.py` 三层：纯逻辑（`ReplayTransport` / `WebsocketTransport`）、OTA 的 HTTP 端点、
+  **真起服务 + 真客户端跑一遍端到端**（端口全部由系统分配，**绝不碰 8765**）。
+  `attach_xiaozhi` 的接线测试真起服务、真连 WebSocket、真编解码，一次钉住 5 个接线点。
+  `opus_av.py` 的 `AvOpusCodec` 用 PyAV（libopus）；`resample_float()` 是唯一的重采样出口。
+  测试 652 -> **710**（两种跑法数字一致）。
+  ⚠️ 端到端那几条**只在 127.0.0.1 上跑过** —— 局域网、防火墙、真固件的怪癖都还没遇上。
+
 ### 未验证（别当成已完成）
 
 - 提示音在真实唤醒流程里的体感效果（用户没提，说明至少不烦人，但也没说好）。
@@ -356,6 +410,12 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
 - **设备端表情资产**：图出得来、脚本能跑、13 个名字定了，但**没刷进过任何板子** ——
   emote 组件怎么铺图（居中 / 拉伸 / 认不认透明底）只有板子到货才知道，
   所以透明底和铺满两个变体都出了（§6.4 最后那条）。
+- **A 档真板子实测（最大的一块）**：整个小智设备层只在**假设备 + 单测**里验过，
+  **从没连过真的 ESP32**。板子到货第一件事是**抓一次真机 hello 原文**，跟
+  `tests/fixtures/xiaozhi/device/device_hello*.json` 对一下 —— 协议文档自己说了它是
+  "基于代码推断"的，**不一致以真机为准**，回来更新 fixture。
+  同批要验的还有：真固件的 OTA 请求形状（`手把手 §6.2` 那三条）、
+  `16000Hz/60ms/1ch` 的实际取值、局域网 + Windows 防火墙这一段。
 - S5 Live2D 换皮、S6 完整版：未开始。
 
 ### 里程碑
@@ -370,6 +430,7 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
 | S5 表情脸 | 🟢 第一版真人验证通过；情绪系统已完成第一层；**平板端第一步代码完成**（2026-09-19；**2026-09-20 这条线砍掉**，不验收了）；**设备端资产产线搭好**（2026-09-20，等板子验证铺图）；Live2D 换皮未开始 |
 | S5.5 常驻自愈 | 🟡 代码完成；断电恢复已实测（2026-09-19），**待跑满验收窗口**（截止 09-23 16:41） |
 | S6a 眼睛跟随 | 🟡 代码完成、冒烟通过，**待真人验收** |
+| A 档 · 小智设备协议层（板子当耳朵嘴巴） | 🟡 **软件全部写完并自测通过**（2026-09-22，710 个测试）；`--xiaozhi-only` + 假设备工具就位；**真板子没连过** —— 到货当天照 [`docs/到货当天_测试清单.md`](docs/到货当天_测试清单.md) 验。还没做：能打断 / 边想边说 |
 | S6 眼睛（完整版）/ 独立成体 | ⬜ 未开始 |
 
 ---
@@ -564,6 +625,33 @@ python scripts\bench_latency.py --no-llm # 只量本地 TTS，不联网、不花
 ---
 
 ## 6. 下一步 TODO（按优先级）
+
+### 🎯 当前下一个动作（2026-09-22 定）
+
+**不是写代码，是等板子。** A 档的软件那一半**已经全部写完并自测通过**
+（见 §0 最底下那条）。板子（预计 09-23 到）到了之后：
+
+1. **照 [`docs/到货当天_测试清单.md`](docs/到货当天_测试清单.md) 一步步做。**
+   每一步的成功标志、卡住了先看哪、要截图给我看什么，那份里全写了 ——
+   **别自己另设计一套流程**。
+2. 起服务统一用 **`py -3.11 -m xiaoyu --xiaozhi-only`**。
+   到货那天（09-23）**浸泡验收还没结束**（16:41 才到），`8765` 被本体占着，
+   而且**不许重启本体** —— `--xiaozhi-only` 不要麦克风/喇叭/摄像头，也不占 8765，
+   跟验收互不打扰。
+3. 板子连上后的**第一件正事**：抓一次真机 hello 原文，跟
+   `tests/fixtures/xiaozhi/device/device_hello*.json` 对一下，不一致以真机为准。
+
+**板子到货前就能做的**（不用等，20 分钟）：
+
+```powershell
+py -3.11 scripts\xiaozhi_fake_device.py --selftest   # 编解码体检
+py -3.11 scripts\xiaozhi_fake_device.py              # 自己起服务 + 自己当设备，走完整轮
+```
+
+这两条过了，说明**我们这一侧是好的** —— 之后板子不通就一定是硬件问题。
+
+**做完 A 档之后**：能打断（说一半改口）+ 边想边说（现在是一轮 ASR->LLM->TTS 全跑完
+才开始下发）。这两条都要等板子，因为只有真设备才能验。
 
 ### ✅ 已完成（2026-09-17 夜）：TTS 换成本地 sherpa-onnx + 大模型连接预热
 

@@ -267,6 +267,94 @@ def build_callbacks(face, console_face=None):
     return on_caption, on_emotion
 
 
+def attach_xiaozhi(settings: Settings, recognizer, client, synthesizer, face=None):
+    """把 A 档那块板子接上（默认关）。返回 server，没开或起不来就返回 None。
+
+    板子和本机的麦克风/喇叭是**两条独立的路**：它自带耳朵嘴巴，我们只出脑子。
+    所以这里不需要状态机参与调度 —— 硬件不同，互不打扰。
+    """
+    if not settings.xiaozhi.enabled:
+        return None
+
+    from .xiaozhi.audio_codec import create_opus_codec
+    from .xiaozhi.brain import BrainParts, BrainResponder
+    from .xiaozhi.opus_av import resample_float
+    from .xiaozhi.ws import XiaozhiServer
+
+    parts = BrainParts(
+        transcribe=recognizer.transcribe,
+        reply=client.stream_reply,
+        synthesize=synthesizer.synthesize_array,
+        resample=resample_float,
+    )
+    responder = BrainResponder(
+        parts,
+        on_caption=(face.publish_caption if face is not None else None),
+        on_emotion=(face.publish_emotion if face is not None else None),
+    )
+    server = XiaozhiServer(
+        settings.xiaozhi,
+        codec_factory=create_opus_codec,
+        responder_factory=lambda: responder,
+    )
+    if not server.start():
+        return None
+    logger.info(
+        "小智设备层已接上（A 档）| 板子配网页里填 http://<本机IP>:{} ｜ 音频参数按设备 hello 走",
+        settings.xiaozhi.port,
+    )
+    return server
+
+
+def run_xiaozhi_only(settings: Settings) -> bool:
+    """只跑 A 档板子那一条路：不碰本机的麦克风 / 喇叭 / 摄像头 / 唤醒词。
+
+    为什么要有这个开关：板子第一次连，出问题时**变量越少越好**。完整本体要先过
+    麦克风、喇叭、唤醒词、摄像头四道门，任何一道不过就起不来 —— 那时候你分不清
+    是板子的问题还是本机的问题。这条路只有一段：
+
+        板子收音 -> ASR（sherpa-onnx SenseVoice）-> 大脑（DeepSeek + 记忆）
+                 -> TTS（sherpa-onnx，本机）-> 板子放音
+
+    哪一段要外网：**只有中间那一段**。ASR 和 TTS 都跑在本机，板子也只走局域网；
+    断网之后唯一会坏的就是「答一句」—— 会卡在大脑那一步。
+
+    板子自带耳朵和嘴巴，所以本机的 Recorder / Speaker / 唤醒词全都不需要。
+
+    **故意不接脸部表情**（`face=None`）：表情要开 8765 口，而 8765 正被浸泡
+    验收占着；再说好看不重要，少一个能坏的地方更重要。
+    """
+    from .asr.recognizer import SpeechRecognizer
+    from .llm.client import DeepSeekClient
+    from .memory.store import MemoryStore
+    from .tts.synthesizer import Synthesizer
+
+    logger.info("小智模式：只跑板子那一条路（本机的麦克风 / 喇叭 / 摄像头都不参与）")
+    memory = MemoryStore(settings)
+    recognizer = SpeechRecognizer(settings)
+    synthesizer = Synthesizer(settings)
+    client = DeepSeekClient(settings, memory=memory)
+    # 板子随时可能连上来，先把对话连接建好，省得第一句话白等
+    client.warmup_async()
+
+    xiaozhi = attach_xiaozhi(settings, recognizer, client, synthesizer, face=None)
+    if xiaozhi is None:
+        logger.error("小智设备层没起来 —— 看上面那条错误日志（端口被占？PyAV 没装？）")
+        memory.close()
+        return False
+
+    logger.info("就绪：板子现在可以连了。按 Ctrl+C 退出。")
+    try:
+        while True:
+            time.sleep(1.0)
+    except KeyboardInterrupt:
+        logger.info("收到 Ctrl+C，退出")
+    finally:
+        xiaozhi.stop()
+        memory.close()
+    return True
+
+
 def run_text_mode(settings: Settings) -> None:
     """键盘模式：不用麦克风，直接打字验证"大脑 + 嘴"这一段。"""
     from .llm.client import DeepSeekClient
@@ -358,6 +446,8 @@ def run_voice_loop(settings: Settings) -> None:
     face = attach_face(settings, state, synthesizer)
     console_face = attach_console_face(settings, state, synthesizer)
     attach_vision(settings, state, face)
+    # A 档：板子那条路（默认关，开了才起 8766）
+    xiaozhi = attach_xiaozhi(settings, recognizer, client, synthesizer, face)
     on_caption, on_emotion = build_callbacks(face, console_face)
 
     # S5.5：开机采一段环境噪声，把静音阈值改成自适应的。
@@ -406,6 +496,8 @@ def run_voice_loop(settings: Settings) -> None:
     except KeyboardInterrupt:
         logger.info("收到 Ctrl+C，退出")
     finally:
+        if xiaozhi is not None:
+            xiaozhi.stop()
         play_cue(synthesizer, sfx.DONE, settings)
         memory.close()
 
@@ -574,6 +666,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--check", action="store_true", help="只做环境自检，不启动硬件")
     parser.add_argument("--text", action="store_true", help="键盘模式（不需要麦克风）")
     parser.add_argument("--wake-report", action="store_true", help="统计每天的唤醒次数（误唤醒率有数）")
+    parser.add_argument(
+        "--xiaozhi-only",
+        action="store_true",
+        help="只跑 A 档板子那一条路（不要麦克风 / 喇叭 / 摄像头），需要 XIAOYU_XIAOZHI_ENABLED=1",
+    )
     parser.add_argument("--log-level", default=None, help="覆盖日志级别，如 DEBUG")
     args = parser.parse_args(argv)
 
@@ -584,6 +681,21 @@ def main(argv: list[str] | None = None) -> int:
     # 只读日志，不需要硬件就绪 —— 放在环境自检之前，坏了也能查误唤醒。
     if args.wake_report:
         return wake_report(settings)
+
+    # 小智模式不走环境自检：它本来就不用本机的麦克风 / 喇叭 / 摄像头，
+    # 拿这几样去拦它属于拦错人。
+    if args.xiaozhi_only:
+        if not settings.xiaozhi.enabled:
+            logger.error(
+                "小智设备层是关着的。先设 XIAOYU_XIAOZHI_ENABLED=1 再跑 "
+                "（默认关是故意的：没板子的时候它不该占任何东西）。"
+            )
+            return 1
+        try:
+            return 0 if run_xiaozhi_only(settings) else 1
+        except Exception:
+            logger.exception("运行出错")
+            return 1
 
     ready = log_diagnose(settings)
     if args.check:

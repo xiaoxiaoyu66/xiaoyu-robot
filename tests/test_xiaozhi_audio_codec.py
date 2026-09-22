@@ -373,18 +373,52 @@ class FakeOpusCodecTest(unittest.TestCase):
 
 
 class CreateOpusCodecTest(unittest.TestCase):
-    """接线点：装真依赖之前，它必须**拒绝**交出假货。"""
+    """接线点的新规矩（2026-09-22 装了 PyAV 之后）：
 
-    def test_refuses_to_hand_out_the_fake_by_default(self):
-        with self.assertRaises(CodecUnavailableError):
-            create_opus_codec(_params(DEVICE_HELLO))
+    默认交**真货**，假货必须显式 `allow_fake=True` 才拿得到。
+    改这一条的那天，下游 705 个用例里只有这两条前提失效 —— 说明"真依赖"这件事
+    被隔离得还不错（知道该去哪儿看）。
+    """
 
-    def test_refusal_tells_you_what_to_do(self):
-        with self.assertRaises(CodecUnavailableError) as ctx:
-            create_opus_codec(_params(DEVICE_HELLO))
-        message = str(ctx.exception)
-        self.assertIn("allow_fake", message)
-        self.assertIn("§2.2.1", message)
+    def test_default_hands_out_a_real_codec_not_the_fake(self):
+        try:
+            codec = create_opus_codec(_params(DEVICE_HELLO))
+        except CodecUnavailableError as exc:  # 这台机器没装 PyAV
+            self.skipTest(f"没装 PyAV：{exc}")
+        try:
+            self.assertNotIsInstance(codec, FakeOpusCodec)
+            self.assertEqual(codec.name, "libopus(PyAV)")
+        finally:
+            codec.close()
+
+    def test_real_codec_takes_both_directions_from_the_hello(self):
+        try:
+            codec = create_opus_codec(_params(DEVICE_HELLO))
+        except CodecUnavailableError as exc:
+            self.skipTest(f"没装 PyAV：{exc}")
+        try:
+            # 上行照设备的 hello（16000/60ms -> 1920 字节），下行照我们的默认（24000/60ms）
+            self.assertEqual(codec.uplink.frame_bytes, 1920)
+            self.assertEqual(codec.downlink.frame_bytes, 2880)
+        finally:
+            codec.close()
+
+    def test_missing_pyav_tells_you_what_to_do(self):
+        """真依赖不在时报错得有那句 pip install —— 现场最需要的就是这句话。"""
+        import sys
+
+        from xiaoyu.xiaozhi.opus_av import _require_av
+
+        saved = sys.modules.pop("av", None)
+        sys.modules["av"] = None  # 让 import av 直接失败
+        try:
+            with self.assertRaises(CodecUnavailableError) as ctx:
+                _require_av()
+            self.assertIn("pip install av", str(ctx.exception))
+        finally:
+            sys.modules.pop("av", None)
+            if saved is not None:
+                sys.modules["av"] = saved
 
     def test_allow_fake_returns_a_fake_with_the_device_uplink(self):
         codec = create_opus_codec(_params(DEVICE_HELLO), allow_fake=True)

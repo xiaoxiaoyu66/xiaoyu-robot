@@ -54,11 +54,14 @@ XiaoYu Robot/
 │  ├─ llm/                 大模型对话（DeepSeek 流式）
 │  ├─ memory/              记忆（SQLite，向量检索预留）
 │  ├─ face/                表情脸（S5 的协议和服务；网页在仓库根的 face/）
-│  └─ vision/              眼睛跟随（S6a：gaze 纯函数 + 摄像头守护线程）
+│  ├─ vision/              眼睛跟随（S6a：gaze 纯函数 + 摄像头守护线程）
+│  ├─ xiaozhi/             小智设备协议层（A 档：ESP32 板子当耳朵和嘴巴，默认关）
+│  └─ body/                身体接口层（舵机；默认关，真舵机回来才换 backend）
 ├─ scripts/
 │  ├─ check_audio.py       S0 音频自检
 │  ├─ download_models.py   下载模型
-│  └─ make_keywords.py     中文唤醒词 -> 音素格式
+│  ├─ make_keywords.py     中文唤醒词 -> 音素格式
+│  └─ xiaozhi_fake_device.py  假设备：不用板子也能验小智那一侧（--selftest 只验编解码）
 ├─ config/
 │  ├─ keywords.txt         唤醒词（改这里就能换名字）
 │  ├─ persona.md           小宇的性格（改这里就能换人格）
@@ -104,6 +107,21 @@ python -m xiaoyu --text
 python scripts\check_audio.py
 python -m xiaoyu
 ```
+
+> **有小智那块板子（A 档）时**（`docs/到货当天_测试清单.md`）：
+>
+> ```powershell
+> # 不用板子也能验我们这一侧：自己起服务 + 自己当设备，走完整的一轮
+> python scripts\xiaozhi_fake_device.py --selftest
+> python scripts\xiaozhi_fake_device.py
+>
+> # 只跑板子这条路（不要麦克风 / 喇叭 / 摄像头；板子配网页里填 http://<本机IP>:8766）
+> $env:XIAOYU_XIAOZHI_ENABLED='1'
+> python -m xiaoyu --xiaozhi-only
+> ```
+>
+> 板子服务端占 **8766（OTA）+ 8767（WebSocket）** —— 为什么是两个口而不是一个：
+> `docs/到货当天_手把手.md` §6.1。
 
 ---
 

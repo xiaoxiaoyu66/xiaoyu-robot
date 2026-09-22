@@ -22,6 +22,8 @@ import time
 from collections.abc import Callable, Iterable
 from queue import Queue
 
+import numpy as np
+
 from ..audio.player import Speaker
 from ..config import Settings
 from ..logger import get_logger
@@ -90,6 +92,23 @@ class Synthesizer:
             logger.exception("合成失败，跳过这句：{}", text[:30])
             return
         self._speaker.play_array(speech.samples, speech.samplerate)
+
+    def synthesize_array(self, text: str) -> tuple[np.ndarray, int]:
+        """合成一句话、**不播放**，返回 (采样, 采样率)。
+
+        给小智那块板子用的（A 档）：设备有自己的喇叭，我们要的是 PCM。
+        合成不出来就返回 (空数组, 0)，**不抛** —— 那边一条会话不该因为
+        一句话合成失败就断掉。
+        """
+        text = text.strip()
+        if not text:
+            return np.zeros(0, dtype=np.float32), 0
+        try:
+            speech = self._engine.synthesize(text)
+        except Exception:  # noqa: BLE001
+            logger.exception("合成失败，跳过这句：{}", text[:30])
+            return np.zeros(0, dtype=np.float32), 0
+        return np.asarray(speech.samples, dtype=np.float32), int(speech.samplerate)
 
     def speak_stream(
         self,

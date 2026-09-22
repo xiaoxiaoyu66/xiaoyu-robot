@@ -30,6 +30,13 @@ websockets>=12
 # 没装的话主程序照跑，那批测试会自己跳过。
 Pillow>=10
 
+# ---------- 小智设备层（A 档：让板子当耳朵和嘴巴）----------
+# 板子和我们之间上下行都是 Opus 裸包，PyAV 自带 ffmpeg + libopus（约 27MB）。
+# ⚠️ **别换成 opuslib / pyogg** —— 2026-09-22 实测这两个在这台 Windows 上都跑不起来
+#    （opuslib 找不到 opus.dll，pyogg 没有裸编解码器），记录见 xiaoyu/xiaozhi/opus_av.py 开头。
+# 没装的话设备层起不来（`CodecUnavailableError`），本体其他部分照跑 —— 默认也是关的。
+av>=12
+
 # ---------- 记忆（4c 向量检索；可选：没装就退回"最近几条事实"）----------
 fastembed>=0.2
 # sentence-transformers>=3.0   # 旧重路线，连带 2GB PyTorch，不用装

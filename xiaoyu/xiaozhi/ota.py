@@ -99,6 +99,12 @@ class OtaConfig:
     version: int = CONFIG_VERSION
     websocket_path: str = DEFAULT_WEBSOCKET_PATH
 
+    # WebSocket 在哪个口上。None = 跟 OTA 同一个 Host（老行为）。
+    # 现在**必须**分开：上游发的是 POST + body，而 websockets 的 HTTP 层不收 body
+    # （2026-09-22 实测，见 ws.py 开头「坑 4」）—— 所以 OTA 走标准库的 HTTP 口，
+    # 对话走 websockets 的另一个口，这里负责把正确的口告诉设备。
+    websocket_port: int | None = None
+
     # 默认**关**：第一版接板子时，变量越少越好 —— 先只给它"往哪连"这一件事。
     # 开了之后设备会把系统时间对齐到我们的时间（见 server_time()）。
     include_server_time: bool = False
@@ -141,14 +147,34 @@ def _as_lines(raw: Any) -> list[str]:
 def normalize_headers(raw: Any) -> dict[str, str]:
     """请求头归一化成 `{"小写名": "值"}`。认不出来就返回 {}，绝不抛。
 
-    接受三种形状：dict（`websockets` 那种 Mapping）、一串 `"Name: value"` 行、
-    或者单行字符串。**同名取最后一个**（HTTP 的规矩），畸形行直接跳过 ——
-    一个坏请求头不该让"板子为什么连不上"变得更难查。
+    接受四种形状：
+
+      1. dict / `Mapping`（`websockets` 给的是这种）
+      2. `email.message.Message` —— **标准库 `http.server` 的 `self.headers` 就是它**。
+         2026-09-22 实测：它长得像 Mapping，但**不是** `collections.abc.Mapping`，
+         于是掉进"按行拆"那条路：迭代一个 Message 拿到的是**值**，`Host` 会被拆成
+         一堆碎片直接丢掉 —— 表现是 OTA 回 400「Host 头不合法」，而客户端明明发了 Host。
+         分口那天就是被它咬的，别删这个分支。
+      3. 一串 `"Name: value"` 行
+      4. 单行字符串
+
+    **同名取最后一个**（HTTP 的规矩），畸形行直接跳过 —— 一个坏请求头不该让
+    "板子为什么连不上"变得更难查。
     """
     if raw is None:
         return {}
     if isinstance(raw, Mapping):
         return {_text(name).strip().lower(): _text(value).strip() for name, value in raw.items()}
+
+    items = getattr(raw, "items", None)
+    if callable(items):
+        try:
+            return {
+                _text(name).strip().lower(): _text(value).strip()
+                for name, value in raw.items()
+            }
+        except Exception:  # noqa: BLE001 —— 认不出来就当没有头，别把请求打回去
+            return {}
 
     out: dict[str, str] = {}
     for line in _as_lines(raw):
@@ -209,7 +235,31 @@ def is_ota_path(path: Any) -> bool:
 # ---------------- 应答侧：构造我们要发回去的东西 ----------------
 
 
-def websocket_url(host: str, path: str = DEFAULT_WEBSOCKET_PATH) -> str:
+def host_with_port(host: str, port: int) -> str:
+    """把 Host 头里的端口换成另一个：`10.0.0.5:8766` -> `10.0.0.5:8767`。
+
+    IPv6 的 `[fe80::1]:8766` 也要认 —— 方括号里的冒号不是分隔符。
+    裸 IPv6（没有方括号）原样返回：那种情况下拼端口只会拼出一个坏地址，
+    让上层自己去报错比这里猜强。
+    """
+    host = (host or "").strip()
+    if not host:
+        return host
+    if host.startswith("["):
+        end = host.find("]")
+        name = host[: end + 1] if end != -1 else host
+    elif host.count(":") == 1:
+        name = host.rsplit(":", 1)[0]
+    elif host.count(":") > 1:
+        return host
+    else:
+        name = host
+    return f"{name}:{int(port)}"
+
+
+def websocket_url(
+    host: str, path: str = DEFAULT_WEBSOCKET_PATH, *, port: int | None = None
+) -> str:
     """`Host` 头 -> 我们要告诉设备的 WebSocket 地址。Host 不合法返回 ""。
 
     只用 `ws://` 不用 `wss://`：家里局域网，没有证书这回事
@@ -223,6 +273,9 @@ def websocket_url(host: str, path: str = DEFAULT_WEBSOCKET_PATH) -> str:
         return ""
     if any(char in host for char in "/?#"):
         return ""
+    if port is not None:
+        # 对话不在 OTA 那个口上 —— 把正确的口写进要下发给设备的地址里
+        host = host_with_port(host, port)
     if not path.startswith("/"):
         path = "/" + path
     return f"ws://{host}{path}"
@@ -257,7 +310,7 @@ def build_config(
     改这个函数之前，先回去把那段读完。
     """
     cfg = config or OtaConfig()
-    url = websocket_url(host, cfg.websocket_path)
+    url = websocket_url(host, cfg.websocket_path, port=cfg.websocket_port)
     if not url:
         raise ValueError(f"Host 头不合法，拼不出 websocket 地址: {host!r}")
 

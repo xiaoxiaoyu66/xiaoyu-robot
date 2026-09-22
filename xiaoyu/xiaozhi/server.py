@@ -143,6 +143,7 @@ class TurnRequest:
 
     session: Session       # 设备说了什么、会话 id 是多少，读它
     codec: OpusCodec       # 下行采样率 / 帧长在 codec.downlink 里
+    audio: bytes = b""     # 这一轮设备送来的音频（已 decode 成 s16le PCM，采样率见 codec.uplink）
 
 
 @runtime_checkable
@@ -207,6 +208,11 @@ class Connection:
         self.hello_timeout = float(hello_timeout)
         self.sent_frames = 0
         self.sent_audio_frames = 0
+        # 设备这一轮送来的音频（解码后的 PCM）。攒到 RUN_TURN 时整段交给 responder。
+        self._uplink = bytearray()
+        # 上限：上行采样率 × 这个秒数。到顶说明设备没给 listen(stop)，
+        # 丢掉重来 —— 不然一个赖着的会话能把内存吃到天亮。
+        self.max_uplink_seconds = 60.0
 
     # ------------------------------------------------------------ 外面用的
 
@@ -255,8 +261,38 @@ class Connection:
             return self.session.poll()
         if frame is None:
             return self.session.handle(Event(EventKind.CLOSED, "对端断开"))
+        self._collect_audio(frame)
         # 每个事件之后都查一次超时（Session.poll 的约定）
         return self.session.handle(event_from_frame(frame)) + self.session.poll()
+
+    def _collect_audio(self, frame: object) -> None:
+        """设备送来的二进制帧 = Opus 音频，解成 PCM 攒着。
+
+        只在 LISTENING / HANDSHAKING 收：§4.1.4 说唤醒词那段音频会**先于**
+        listen(detect) 到，不收就等于把这半句丢了。别的时候收到音频本来就
+        "不算错、也没用"（状态机那边只记一笔），这里跟着不收。
+        """
+        if not isinstance(frame, (bytes, bytearray, memoryview)):
+            return
+        if self.session.state not in (SessionState.HANDSHAKING, SessionState.LISTENING):
+            return
+        try:
+            pcm = self.codec.decode(bytes(frame))
+        except Exception:  # noqa: BLE001 —— 契约是 decode 不抛；真抛了也不能死
+            logger.exception("小智：解码上行音频炸了（已吞掉）")
+            return
+        if not pcm:
+            return
+        limit = int(
+            self.codec.uplink.sample_rate
+            * self.max_uplink_seconds
+            * self.codec.uplink.channels
+            * 2
+        )
+        if len(self._uplink) + len(pcm) > limit:
+            self._uplink.clear()
+            logger.warning("小智：上行音频攒过 {:.0f} 秒还没收完一轮，清空重来", self.max_uplink_seconds)
+        self._uplink.extend(pcm)
 
     # ------------------------------------------------------------ 执行动作
 
@@ -287,7 +323,9 @@ class Connection:
 
     async def _run_turn(self) -> None:
         """我们说一轮：拿应答 -> 切帧 -> 编码 -> 发下去 -> 告诉状态机说完了。"""
-        request = TurnRequest(session=self.session, codec=self.codec)
+        audio = bytes(self._uplink)
+        self._uplink.clear()
+        request = TurnRequest(session=self.session, codec=self.codec, audio=audio)
         downlink = self.codec.downlink
         packets = 0
         async for chunk in self.responder.respond(request):

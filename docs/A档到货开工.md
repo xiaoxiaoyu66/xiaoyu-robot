@@ -170,7 +170,7 @@ A 档是花 **¥95** 给它买一个"身体"：**ESP32-S3 小板当耳朵和嘴�
   不要一上来就动 `app.py` 里现有的语音链路
 - 复用现成的：`llm/client.py`（DeepSeek 流式 + 情绪标记）、`memory/*`、`tts/*`、
   `face/protocol.py` 的情绪定义
-- Opus 编解码要新依赖（`opuslib` / `pyogg`）—— **单独一步，装完立刻写个最小单测**
+- Opus 编解码的新依赖 —— **2026-09-22 实测：`opuslib` / `pyogg` 在这台 Windows 上都跑不起来**（前者一运行就 `Could not find Opus library`，后者没有裸编解码器）。能用的是 **PyAV：`py -3.11 -m pip install av`**（自带 ffmpeg + libopus），**已经装好并接上 `AvOpusCodec` 了**。验一次：`py -3.11 scripts\xiaozhi_fake_device.py --selftest`
 - 最后才用**一个开关**接进 `app.py`，默认关，保证老链路一行不受影响
 
 **两个"白给"的好消息**（已核实，省得重新查）

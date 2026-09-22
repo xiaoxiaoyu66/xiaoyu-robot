@@ -280,6 +280,39 @@ class BodyConfig:
     invert_tilt: bool = False
 
 
+@dataclass(frozen=True)
+class XiaozhiConfig:
+    """小智设备协议层（A 档）：把 ESP32 小板当它的耳朵和嘴巴，脑子仍是我们这套。
+
+    默认**关**：没板子的时候它什么都不该做（占端口、占内存都是白占）。
+    和本体的语音循环**各走各的路** —— 板子那条路不抢本机的麦克风，
+    本机这条也不等板子。所以 enabled 是个纯开关，没有任何耦合。
+    """
+
+    enabled: bool = False
+    host: str = "0.0.0.0"        # 只在局域网用，不映射公网（和脸页同一条安全边界）
+    port: int = 8766             # ⚠️ 8765 归表情脸，撞了会干扰浸泡验收
+    token: str = "xiaoyu"        # 写进 OTA 应答，设备连 WebSocket 时带上
+    websocket_path: str = "/xiaozhi/v1/"
+    # 对话走哪个口。**必须和 port 分开**：OTA 是 POST + body，而 websockets 的
+    # HTTP 层不收 body（2026-09-22 实测，见 xiaozhi/ws.py 开头「坑 4」）。
+    websocket_port: int = 8767
+    # 要不要把系统时间一起下发给设备（设备会拿它对齐自己的时间）。
+    # 默认关：第一次接真板子，变量越少越好。
+    send_server_time: bool = False
+
+    def ota_config(self):
+        """转成 `xiaozhi/ota.py` 那一层要的对象（那边不认识网络参数）。"""
+        from .xiaozhi.ota import OtaConfig
+
+        return OtaConfig(
+            token=self.token,
+            websocket_path=self.websocket_path,
+            websocket_port=self.websocket_port,
+            include_server_time=self.send_server_time,
+        )
+
+
 @dataclass
 class Settings:
     paths: Paths = field(default_factory=Paths)
@@ -292,6 +325,7 @@ class Settings:
     face: FaceConfig = field(default_factory=FaceConfig)
     vision: VisionConfig = field(default_factory=VisionConfig)
     body: BodyConfig = field(default_factory=BodyConfig)
+    xiaozhi: XiaozhiConfig = field(default_factory=XiaozhiConfig)
 
     @classmethod
     def load(cls) -> "Settings":
@@ -350,6 +384,14 @@ class Settings:
                 deadzone=_env_float("XIAOYU_BODY_DEADZONE", 0.05),
                 invert_pan=_env_bool("XIAOYU_BODY_INVERT_PAN", False),
                 invert_tilt=_env_bool("XIAOYU_BODY_INVERT_TILT", False),
+            ),
+            xiaozhi=XiaozhiConfig(
+                enabled=_env_bool("XIAOYU_XIAOZHI_ENABLED", False),
+                port=_env_int("XIAOYU_XIAOZHI_PORT") or 8766,
+                token=_env_str("XIAOYU_XIAOZHI_TOKEN") or "xiaoyu",
+                websocket_path=_env_str("XIAOYU_XIAOZHI_PATH") or "/xiaozhi/v1/",
+                websocket_port=_env_int("XIAOYU_XIAOZHI_WS_PORT") or 8767,
+                send_server_time=_env_bool("XIAOYU_XIAOZHI_SEND_TIME", False),
             ),
         )
         settings.paths.ensure_dirs()
